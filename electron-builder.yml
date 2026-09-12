@@ -1,0 +1,33 @@
+appId: com.taimio.app
+productName: TAIMIO
+copyright: Copyright © TAIMIO
+directories:
+  buildResources: build
+  output: release
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!design/*'
+  - '!TAIMIO_START/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!*.md'
+extraResources:
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sql-wasm.wasm
+  - from: resources/whisper-runtime
+    to: whisper
+asarUnpack:
+  - resources/**
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+win:
+  executableName: TAIMIO
+  icon: build/icon.png
+  target:
+    - target: portable
+      arch:
+        - x64
+portable:
+  artifactName: TAIMIO-${version}-portable.${ext}
+npmRebuild: false
