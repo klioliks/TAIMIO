@@ -14,7 +14,8 @@
     "keys:issue": "node key-service/scripts/issue.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist:portable": "npm run build && electron-builder --win portable"
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:win": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

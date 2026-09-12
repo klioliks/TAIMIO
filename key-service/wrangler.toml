@@ -5,4 +5,4 @@ compatibility_date = "2026-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "taimio-keys"
-database_id = "local-taimio-keys"
+database_id = "d1636a42-1377-4f7c-93fa-bc19a129cb79"

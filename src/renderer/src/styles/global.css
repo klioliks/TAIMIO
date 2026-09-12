@@ -25,6 +25,15 @@
   box-sizing: border-box;
 }
 
+/* В Electron пробел из latin-подмножества Manrope схлопывается между кириллицей. */
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-weight: 100 900;
+  src: local('Segoe UI');
+  unicode-range: U+0020;
+}
+
 html,
 body,
 #root {
@@ -34,6 +43,7 @@ body,
   color: var(--text);
   font-family: var(--font);
   background: var(--bg-deep);
+  word-spacing: 0.08em;
 }
 
 button,
@@ -216,9 +226,11 @@ button {
 }
 
 .activate-screen {
-  height: calc(100vh - var(--titlebar-height));
-  display: grid;
-  place-items: center;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 32px;
 }
 
@@ -228,18 +240,33 @@ button {
   border-radius: 28px;
   background: var(--glass-strong);
   border: 1px solid var(--stroke-strong);
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+
+.activate-card h1,
+.activate-card p,
+.activate-card label {
+  letter-spacing: normal;
+  word-spacing: 0.12em;
+  white-space: normal;
 }
 
 .activate-card h1 {
   margin: 0 0 8px;
   font-size: 32px;
+  line-height: 1.25;
+  font-weight: 800;
 }
 
 .activate-label {
   color: var(--text);
   font-weight: 600;
+  line-height: 1.4;
 }
 
 .activate-card input {
@@ -249,16 +276,17 @@ button {
   border: 1px solid var(--stroke);
   background: rgba(7, 12, 26, 0.72);
   color: var(--text);
-  letter-spacing: 0.04em;
 }
 
 .activate-error {
   margin: 0;
   color: #ffb4b4;
+  line-height: 1.4;
 }
 
 .activate-hint {
   margin: 4px 0 0;
+  line-height: 1.45;
 }
 
 .access-banner {

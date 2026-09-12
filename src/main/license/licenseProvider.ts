@@ -9,4 +9,5 @@ export interface LicenseProvider {
   refresh(reason?: LicenseRefreshReason): Promise<LicenseSnapshot>
   /** Будет использовано экраном активации. Заглушка может не реализовывать. */
   activate?(licenseKey: string): Promise<LicenseSnapshot>
+  clear?(): Promise<LicenseSnapshot>
 }

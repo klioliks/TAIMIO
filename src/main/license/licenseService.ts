@@ -28,6 +28,13 @@ export class LicenseService {
     return this.provider.activate(accessKey)
   }
 
+  async clear(): Promise<LicenseSnapshot> {
+    if (!this.provider.clear) {
+      throw new Error('Удаление ключа недоступно.')
+    }
+    return this.provider.clear()
+  }
+
   async assertCanStartProcessing(): Promise<void> {
     const snapshot = await this.getSnapshot()
     const caps = capabilitiesFromLicense(snapshot)

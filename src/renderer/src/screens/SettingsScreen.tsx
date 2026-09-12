@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AppInfo, LicenseSnapshot, SetupProgressEvent, WhisperModelId } from '@shared/types'
 import { t, tf } from '../i18n/ru'
 import { api } from '../lib/api'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 interface SettingsScreenProps {
   info: AppInfo | null
@@ -24,6 +25,7 @@ export function SettingsScreen({
   const [setupBusy, setSetupBusy] = useState(false)
   const [setupProgress, setSetupProgress] = useState<SetupProgressEvent | null>(null)
   const [accessBusy, setAccessBusy] = useState(false)
+  const [confirmClearAccess, setConfirmClearAccess] = useState(false)
   const rows = info
     ? [
         { label: t('settingsAppData'), path: info.appDataRoot },
@@ -99,6 +101,7 @@ export function SettingsScreen({
   }
 
   function accessStatusLabel(): string {
+    if (access?.plan === 'admin' && access.state === 'active') return t('accessStatusAdmin')
     switch (access?.state) {
       case 'active':
         return t('accessStatusActive')
@@ -120,6 +123,18 @@ export function SettingsScreen({
       month: 'long',
       year: 'numeric'
     })
+  }
+
+  async function clearAccess(): Promise<void> {
+    setAccessBusy(true)
+    setConfirmClearAccess(false)
+    const result = await api().clearAccessKey()
+    setAccessBusy(false)
+    if (!result.ok) {
+      onToast?.(result.error)
+      return
+    }
+    onAccessChange?.(result.data.snapshot)
   }
 
   async function checkAccess(): Promise<void> {
@@ -179,7 +194,7 @@ export function SettingsScreen({
       <div className="settings-grid">
         <article className="settings-card">
           <h2>{t('accessTitle')}</h2>
-          <p>{t('accessBetaName')}</p>
+          <p>{access?.plan === 'admin' ? t('accessAdminName') : t('accessBetaName')}</p>
           <div className="setup-list">
             <div className="setup-row">
               <span>{t('accessStatus')}</span>
@@ -189,11 +204,17 @@ export function SettingsScreen({
             </div>
             <div className="setup-row">
               <span>{t('accessLeft')}</span>
-              <strong>{access?.daysLeft != null ? tf('accessDays', { count: access.daysLeft }) : '—'}</strong>
+              <strong>
+                {access?.plan === 'admin'
+                  ? t('accessUnlimited')
+                  : access?.daysLeft != null
+                    ? tf('accessDays', { count: access.daysLeft })
+                    : '—'}
+              </strong>
             </div>
             <div className="setup-row">
               <span>{t('accessUntil')}</span>
-              <strong>{formatUntil(access?.expiresAt)}</strong>
+              <strong>{access?.plan === 'admin' ? t('accessNoExpiry') : formatUntil(access?.expiresAt)}</strong>
             </div>
             <div className="setup-row">
               <span>{t('accessKeyLabel')}</span>
@@ -204,6 +225,11 @@ export function SettingsScreen({
             <button type="button" className="ghost" disabled={accessBusy} onClick={() => void checkAccess()}>
               {accessBusy ? t('accessChecking') : t('accessCheck')}
             </button>
+            {access?.state && access.state !== 'not_activated' ? (
+              <button type="button" className="danger" disabled={accessBusy} onClick={() => setConfirmClearAccess(true)}>
+                {t('accessClear')}
+              </button>
+            ) : null}
           </div>
         </article>
         <article className="settings-card">
@@ -416,6 +442,15 @@ export function SettingsScreen({
           </p>
         </article>
       </div>
+      {confirmClearAccess ? (
+        <ConfirmDialog
+          title={t('accessClearTitle')}
+          body={t('accessClearBody')}
+          confirmLabel={t('accessClear')}
+          onCancel={() => setConfirmClearAccess(false)}
+          onConfirm={() => void clearAccess()}
+        />
+      ) : null}
     </section>
   )
 }

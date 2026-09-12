@@ -28,9 +28,20 @@ win:
   executableName: TAIMIO
   icon: build/icon.png
   target:
-    - target: portable
+    - target: nsis
       arch:
         - x64
+nsis:
+  artifactName: Установить TAIMIO.${ext}
+  shortcutName: TAIMIO
+  uninstallDisplayName: TAIMIO
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  installerLanguages:
+    - ru
 portable:
   artifactName: TAIMIO-${version}-portable.${ext}
 npmRebuild: false

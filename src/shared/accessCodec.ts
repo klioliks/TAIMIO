@@ -7,6 +7,10 @@ export function looksLikeOfflineKey(value: string): boolean {
   return value.toUpperCase().replace(/\s+/g, '').startsWith('TAIMIO-OF-')
 }
 
+export function looksLikeAdminKey(value: string): boolean {
+  return value.toUpperCase().replace(/\s+/g, '').startsWith('TAIMIO-AD-')
+}
+
 export function looksLikeOnlineKey(value: string): boolean {
   return ONLINE_KEY_RE.test(normalizeTypedKey(value))
 }
@@ -59,7 +63,7 @@ export function maskAccessKey(value: string): string {
   const parts = normalizeTypedKey(value).split('-').filter(Boolean)
   if (parts.length < 3) return 'TAIMIO-••••'
   const last = parts[parts.length - 1]
-  const head = parts[1] === 'OF' ? 'TAIMIO-OF' : 'TAIMIO'
+  const head = parts[1] === 'OF' ? 'TAIMIO-OF' : parts[1] === 'AD' ? 'TAIMIO-AD' : 'TAIMIO'
   return `${head}-••••-••••-${last.slice(-4)}`
 }
 

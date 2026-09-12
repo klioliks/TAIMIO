@@ -61,6 +61,7 @@ const api: TaimioApi = {
   getLicenseStatus: () => ipcRenderer.invoke('license:status'),
   activateAccessKey: (accessKey: string) => ipcRenderer.invoke('access:activate', accessKey),
   refreshAccessKey: () => ipcRenderer.invoke('access:refresh'),
+  clearAccessKey: () => ipcRenderer.invoke('access:clear'),
   setWhisperModel: (model: WhisperModelId) => ipcRenderer.invoke('settings:setWhisperModel', model),
   downloadWhisperModel: (model?: WhisperModelId) =>
     ipcRenderer.invoke('settings:downloadWhisperModel', model),

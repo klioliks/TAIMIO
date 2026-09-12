@@ -285,6 +285,7 @@ export interface TaimioApi {
   getLicenseStatus: () => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
   activateAccessKey: (accessKey: string) => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
   refreshAccessKey: () => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
+  clearAccessKey: () => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
   setWhisperModel: (model: WhisperModelId) => Promise<Result<AppInfo>>
   downloadWhisperModel: (model?: WhisperModelId) => Promise<Result<AppInfo>>
   downloadLocalLlm: () => Promise<Result<AppInfo>>

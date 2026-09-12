@@ -676,6 +676,15 @@ export function registerIpc(options: {
     }
   })
 
+  ipcMain.handle('access:clear', async () => {
+    try {
+      const snapshot = await license.clear()
+      return ok({ snapshot, capabilities: capabilitiesFromLicense(snapshot) })
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
   ipcMain.handle('settings:getOpenAiKeyStatus', async () => {
     try {
       return ok(openAiKeyStatus(paths))

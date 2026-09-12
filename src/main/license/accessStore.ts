@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { safeStorage } from 'electron'
 import type { AppPaths } from '../paths'
@@ -10,7 +10,7 @@ export interface AccessEnvelope {
   keyId: string
   keyMasked: string
   activatedAt: string
-  expiresAt: string
+  expiresAt: string | null
   deviceId: string
   lastCheckedAt: string
   lastTrustedLocalAt: string
@@ -34,6 +34,11 @@ export function readAccessEnvelope(paths: AppPaths): AccessEnvelope | null {
   } catch {
     return null
   }
+}
+
+export function clearAccessEnvelope(paths: AppPaths): void {
+  const file = envelopePath(paths)
+  if (existsSync(file)) rmSync(file)
 }
 
 export function writeAccessEnvelope(paths: AppPaths, envelope: AccessEnvelope): void {

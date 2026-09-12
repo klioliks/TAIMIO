@@ -1,11 +1,12 @@
 import { app } from 'electron'
 import { ACCESS_CONFIG } from '../../shared/accessConfig'
-import { looksLikeOfflineKey, maskAccessKey, normalizeTypedKey } from '../../shared/accessCodec'
+import { looksLikeAdminKey, looksLikeOfflineKey, maskAccessKey, normalizeTypedKey } from '../../shared/accessCodec'
 import { daysUntil, type LicenseRefreshReason, type LicenseSnapshot, type LicenseState } from '../../shared/license'
 import type { AppPaths } from '../paths'
 import type { LicenseProvider } from './licenseProvider'
-import { readAccessEnvelope, writeAccessEnvelope, type AccessEnvelope } from './accessStore'
+import { clearAccessEnvelope, readAccessEnvelope, writeAccessEnvelope, type AccessEnvelope } from './accessStore'
 import { getOrCreateDeviceId } from './deviceId'
+import { adminKeyId, parseAdminKey } from './adminKey'
 import { offlineKeyId, parseOfflineKey } from './offlineKey'
 import { AccessClientError, activateOnlineKey, checkOnlineKey } from './onlineKey'
 
@@ -40,6 +41,9 @@ export class TaimioAccessProvider implements LicenseProvider {
   async refresh(reason: LicenseRefreshReason = 'manual'): Promise<LicenseSnapshot> {
     const envelope = readAccessEnvelope(this.paths)
     if (!envelope) return emptySnapshot()
+    if (envelope.plan === 'admin') {
+      return this.snapshotFromEnvelope(envelope, 'offline')
+    }
     if (envelope.plan === 'beta_offline') {
       return this.snapshotFromEnvelope(this.touchOffline(envelope), 'cached')
     }
@@ -78,12 +82,42 @@ export class TaimioAccessProvider implements LicenseProvider {
     return this.snapshotFromEnvelope(envelope, 'cached')
   }
 
+  async clear(): Promise<LicenseSnapshot> {
+    clearAccessEnvelope(this.paths)
+    return emptySnapshot()
+  }
+
   async activate(licenseKey: string): Promise<LicenseSnapshot> {
     const typed = normalizeTypedKey(licenseKey)
     if (!typed) throw new Error('Введите ключ доступа.')
     const deviceId = getOrCreateDeviceId(this.paths)
+    if (looksLikeAdminKey(typed)) return this.activateAdmin(typed, deviceId)
     if (looksLikeOfflineKey(typed)) return this.activateOffline(typed, deviceId)
     return this.activateOnline(typed, deviceId)
+  }
+
+  private activateAdmin(typed: string, deviceId: string): LicenseSnapshot {
+    const parsed = parseAdminKey(typed)
+    const existing = readAccessEnvelope(this.paths)
+    if (existing?.plan === 'admin' && existing.keyId === adminKeyId(parsed.serial)) {
+      return this.snapshotFromEnvelope(existing, 'offline')
+    }
+    const activatedAt = new Date().toISOString()
+    const envelope: AccessEnvelope = {
+      v: 1,
+      plan: 'admin',
+      keyId: adminKeyId(parsed.serial),
+      keyMasked: maskAccessKey(typed),
+      activatedAt,
+      expiresAt: null,
+      deviceId,
+      lastCheckedAt: activatedAt,
+      lastTrustedLocalAt: activatedAt,
+      status: 'active',
+      offlineSerial: parsed.serial
+    }
+    writeAccessEnvelope(this.paths, envelope)
+    return this.snapshotFromEnvelope(envelope, 'offline')
   }
 
   private activateOffline(typed: string, deviceId: string): LicenseSnapshot {
@@ -136,7 +170,9 @@ export class TaimioAccessProvider implements LicenseProvider {
 
   private touchOffline(envelope: AccessEnvelope): AccessEnvelope {
     const next = { ...envelope, lastTrustedLocalAt: this.trustedNow(envelope) }
-    if (Date.parse(next.lastTrustedLocalAt) >= Date.parse(next.expiresAt)) next.status = 'expired'
+    if (next.expiresAt && Date.parse(next.lastTrustedLocalAt) >= Date.parse(next.expiresAt)) {
+      next.status = 'expired'
+    }
     writeAccessEnvelope(this.paths, next)
     return next
   }
@@ -160,9 +196,23 @@ export class TaimioAccessProvider implements LicenseProvider {
     source: LicenseSnapshot['source'] | LicenseRefreshReason
   ): LicenseSnapshot {
     if (!envelope) return emptySnapshot()
+    if (envelope.plan === 'admin') {
+      return {
+        state: 'active',
+        plan: 'admin',
+        licenseKeyMasked: envelope.keyMasked,
+        activatedAt: envelope.activatedAt,
+        expiresAt: null,
+        daysLeft: null,
+        graceEndsAt: null,
+        lastCheckedAt: envelope.lastCheckedAt,
+        offline: true,
+        source: 'offline'
+      }
+    }
     const nowIso = envelope.plan === 'beta_offline' ? this.trustedNow(envelope) : new Date().toISOString()
     const now = Date.parse(nowIso)
-    const expires = Date.parse(envelope.expiresAt)
+    const expires = envelope.expiresAt ? Date.parse(envelope.expiresAt) : Number.NaN
     let state: LicenseState = envelope.status
     let graceEndsAt: string | null = null
     if (envelope.status === 'active' && Number.isFinite(expires) && now >= expires) {
