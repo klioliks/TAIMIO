@@ -6,8 +6,11 @@ export class AlwaysValidLicenseProvider implements LicenseProvider {
   async getSnapshot(): Promise<LicenseSnapshot> {
     return {
       state: 'active',
+      plan: 'beta',
       licenseKeyMasked: null,
+      activatedAt: new Date().toISOString(),
       expiresAt: null,
+      daysLeft: null,
       graceEndsAt: null,
       lastCheckedAt: new Date().toISOString(),
       offline: true,

@@ -185,6 +185,7 @@ export async function transcribeAudio(options: {
     language: options.language,
     model: options.modelId,
     analysisStale: false,
+    retellStale: false,
     bodyText: null,
     segments,
     updatedAt: nowIso()

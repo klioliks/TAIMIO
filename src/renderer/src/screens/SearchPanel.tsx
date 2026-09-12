@@ -166,7 +166,12 @@ export function SearchPanel({ project, onToast }: SearchPanelProps): React.JSX.E
               />
             </>
           ) : (
-            <p className="muted">{result ? t('searchPickHit') : t('searchIdle')}</p>
+            <div className="search-idle">
+              <p className="muted">{result ? t('searchPickHit') : t('searchIdle')}</p>
+              {project.aiMode === 'local' ? (
+                <p className="search-local-note muted">{t('searchLocalBanner')}</p>
+              ) : null}
+            </div>
           )}
         </div>
       </div>

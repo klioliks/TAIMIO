@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AiMode, AppInfo, ProjectSummary } from '@shared/types'
+import type { AiMode, AppInfo, LicenseSnapshot, ProjectSummary } from '@shared/types'
 import workspaceBg from './assets/taimio-workspace-background.png'
 import type { AppView, WorkspaceTab } from './appState'
 import { TitleBar } from './components/TitleBar'
 import { Sidebar } from './components/Sidebar'
 import { NewProjectModal } from './components/NewProjectModal'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { ActivateScreen } from './screens/ActivateScreen'
 import { WelcomeScreen } from './screens/WelcomeScreen'
 import { ProjectsScreen } from './screens/ProjectsScreen'
 import { SettingsScreen } from './screens/SettingsScreen'
@@ -24,6 +25,14 @@ export default function App(): React.JSX.Element {
   const [creating, setCreating] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [access, setAccess] = useState<LicenseSnapshot | null>(null)
+  const [accessReady, setAccessReady] = useState(false)
+
+  const refreshAccess = useCallback(async () => {
+    const result = await api().getLicenseStatus()
+    if (result.ok) setAccess(result.data.snapshot)
+    setAccessReady(true)
+  }, [])
 
   const refresh = useCallback(async () => {
     const [infoResult, listResult] = await Promise.all([api().getAppInfo(), api().listProjects()])
@@ -31,7 +40,8 @@ export default function App(): React.JSX.Element {
     if (listResult.ok) setProjects(listResult.data)
     if (!infoResult.ok) setToast(infoResult.error)
     else if (!listResult.ok) setToast(listResult.error)
-  }, [])
+    await refreshAccess()
+  }, [refreshAccess])
 
   useEffect(() => {
     void refresh()
@@ -113,9 +123,18 @@ export default function App(): React.JSX.Element {
     >
       <div className="film-deco" aria-hidden="true" />
       <TitleBar />
+      {accessReady && access?.state === 'not_activated' ? (
+        <ActivateScreen onActivated={() => void refresh()} />
+      ) : (
       <div className={view === 'workspace' ? 'shell workspace' : 'shell'}>
         <Sidebar view={view} workspaceTab={tab} compact={view === 'workspace'} onNavigate={(next, nextTab) => void navigate(next, nextTab)} />
         <main className="main">
+          {access && (access.state === 'expired' || access.state === 'blocked') ? (
+            <p className="access-banner">
+              {access.state === 'blocked' ? t('accessStatusBlocked') : t('accessExpiredBanner')}{' '}
+              {t('accessReadOnly')}
+            </p>
+          ) : null}
           {view === 'home' ? (
             <WelcomeScreen onNewProject={() => setShowCreate(true)} onOpenProjects={() => setView('projects')} />
           ) : null}
@@ -128,11 +147,18 @@ export default function App(): React.JSX.Element {
             />
           ) : null}
           {view === 'settings' ? (
-            <SettingsScreen info={info} onInfoChange={setInfo} onToast={setToast} />
+            <SettingsScreen
+              info={info}
+              access={access}
+              onInfoChange={setInfo}
+              onAccessChange={setAccess}
+              onToast={setToast}
+            />
           ) : null}
           {view === 'workspace' && current ? (
             <WorkspaceScreen
               project={current}
+              info={info}
               tab={tab}
               onTab={setTab}
               onToast={setToast}
@@ -142,6 +168,7 @@ export default function App(): React.JSX.Element {
           ) : null}
         </main>
       </div>
+      )}
       {showCreate ? (
         <NewProjectModal
           error={createError}

@@ -3,6 +3,7 @@ import type {
   AiMode,
   CreateProjectInput,
   PipelineProgressEvent,
+  SetupProgressEvent,
   TaimioApi,
   WhisperModelId
 } from '../shared/types'
@@ -35,8 +36,20 @@ const api: TaimioApi = {
     ipcRenderer.invoke('transcript:rebuild', projectId, videoId),
   getAnalysis: (projectId: string, videoId: string) =>
     ipcRenderer.invoke('analysis:get', projectId, videoId),
-  exportOutlineDocx: (projectId: string, videoIds: string[]) =>
-    ipcRenderer.invoke('analysis:exportDocx', projectId, videoIds),
+  rebuildRetell: (projectId: string, videoId: string) =>
+    ipcRenderer.invoke('retell:build', projectId, videoId),
+  getRetell: (projectId: string, videoId: string) =>
+    ipcRenderer.invoke('retell:get', projectId, videoId),
+  getVisuals: (projectId: string, videoId: string) =>
+    ipcRenderer.invoke('visuals:get', projectId, videoId),
+  rebuildVisuals: (projectId: string, videoId: string) =>
+    ipcRenderer.invoke('visuals:build', projectId, videoId),
+  exportOutlineDocx: (projectId: string, videoIds: string[], kind?: 'plan' | 'conspect') =>
+    ipcRenderer.invoke('analysis:exportDocx', projectId, videoIds, kind ?? 'plan'),
+  exportTranscriptDocx: (projectId: string, videoIds: string[]) =>
+    ipcRenderer.invoke('transcript:exportDocx', projectId, videoIds),
+  exportReportDocx: (projectId: string, videoIds: string[]) =>
+    ipcRenderer.invoke('report:exportDocx', projectId, videoIds),
   setProjectAiMode: (projectId: string, aiMode: AiMode) =>
     ipcRenderer.invoke('projects:setAiMode', projectId, aiMode),
   getOpenAiKeyStatus: () => ipcRenderer.invoke('settings:getOpenAiKeyStatus'),
@@ -46,9 +59,22 @@ const api: TaimioApi = {
   searchProject: (projectId: string, query: string, videoId?: string | null) =>
     ipcRenderer.invoke('search:query', projectId, query, videoId),
   getLicenseStatus: () => ipcRenderer.invoke('license:status'),
+  activateAccessKey: (accessKey: string) => ipcRenderer.invoke('access:activate', accessKey),
+  refreshAccessKey: () => ipcRenderer.invoke('access:refresh'),
   setWhisperModel: (model: WhisperModelId) => ipcRenderer.invoke('settings:setWhisperModel', model),
   downloadWhisperModel: (model?: WhisperModelId) =>
     ipcRenderer.invoke('settings:downloadWhisperModel', model),
+  downloadLocalLlm: () => ipcRenderer.invoke('settings:downloadLocalLlm'),
+  installLocalStack: () => ipcRenderer.invoke('settings:installLocalStack'),
+  onSetupProgress: (handler: (event: SetupProgressEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: SetupProgressEvent): void => {
+      handler(payload)
+    }
+    ipcRenderer.on('setup:progress', listener)
+    return () => {
+      ipcRenderer.removeListener('setup:progress', listener)
+    }
+  },
   openExternalPath: (targetPath: string) => ipcRenderer.invoke('shell:openPath', targetPath),
   openExternalUrl: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join, resolve, sep } from 'path'
+import { capabilitiesFromLicense } from '../shared/license'
 import type { AnalysisDocument, CreateProjectInput, Result, TranscriptDocument } from '../shared/types'
 import type { CatalogStore } from './catalog'
 import type { AppPaths } from './paths'
@@ -16,9 +17,16 @@ import {
   readOpenAiKey,
   writeOpenAiKey
 } from './secrets'
-import { testOpenAiKey } from './openaiProvider'
+import { chatJson, chatText, testOpenAiKey } from './openaiProvider'
 import { buildAnalysisDocument } from './analysis'
-import { buildOutlineDocx, outlineExportFileName } from './exportOutline'
+import { buildRetellDocument } from './retell'
+import { collectHardware } from './hardware'
+import { ensureLocalLlm, LOCAL_LLM, localChat, localLlmFileReady, localRuntimeReady } from './localLlm'
+import { buildVisualsDocument } from './visuals'
+import { buildConspectDocx, buildOutlineDocx, outlineExportFileName } from './exportOutline'
+import type { OutlineExportKind } from './exportOutline'
+import { buildTranscriptDocx, transcriptExportFileName } from './exportTranscript'
+import { buildReportDocx, reportExportFileName, type ReportVideo } from './exportReport'
 import { searchTranscripts } from './search'
 import type { LicenseService } from './license/licenseService'
 
@@ -63,6 +71,10 @@ export function registerIpc(options: {
     const modelId = parseWhisperModel(await catalog.getSetting('whisper_model'))
     const whisper = whisperStatus(paths, modelId)
     const keyStatus = openAiKeyStatus(paths)
+    const [hardware, runtimeReady] = await Promise.all([
+      collectHardware(paths.cacheDir),
+      localRuntimeReady()
+    ])
     return {
       version: app.getVersion(),
       appName: 'TAIMIO',
@@ -80,30 +92,83 @@ export function registerIpc(options: {
       whisperModelReady: whisper.whisperModelReady,
       whisperModel: whisper.whisperModel,
       openaiKeySet: keyStatus.set,
-      openaiKeyMasked: keyStatus.masked
+      openaiKeyMasked: keyStatus.masked,
+      localRuntimeReady: runtimeReady,
+      localLlmReady: localLlmFileReady(paths) && runtimeReady,
+      localLlmLabel: LOCAL_LLM.label,
+      localLlmSizeLabel: LOCAL_LLM.sizeLabel,
+      hardware
     }
+  }
+
+  function cloudChat(apiKey: string) {
+    return (request: { system: string; user: string; json?: boolean }) =>
+      request.json
+        ? chatJson({ apiKey, model: 'gpt-4o-mini', system: request.system, user: request.user })
+        : chatText({ apiKey, model: 'gpt-4o-mini', system: request.system, user: request.user })
   }
 
   async function runAnalysis(projectId: string, videoId: string) {
     const project = await catalog.getProject(projectId)
     if (!project) throw new Error('Проект не найден.')
-    if (project.aiMode !== 'cloud') {
-      throw new Error(
-        'Конспект через облако доступен в облачном режиме. Смените режим в настройках проекта.'
-      )
-    }
-    const apiKey = readOpenAiKey(paths)
-    if (!apiKey) {
-      throw new Error('Сначала сохраните ключ OpenAI в настройках приложения.')
-    }
     const transcript = await projects.getTranscript(projectId, videoId)
     if (!transcript) throw new Error('Сначала распознайте речь.')
-    logger.info(`Analysis start for ${videoId}`)
-    const document = await buildAnalysisDocument(transcript, apiKey)
+    await license.assertCanStartProcessing()
+    logger.info(`Analysis start for ${videoId} (${project.aiMode})`)
+    const document =
+      project.aiMode === 'local'
+        ? await buildAnalysisDocument(transcript, (request) => localChat(paths, request), {
+            provider: 'local',
+            model: LOCAL_LLM.id,
+            chunkChars: 7000
+          })
+        : await (async () => {
+            const apiKey = readOpenAiKey(paths)
+            if (!apiKey) {
+              throw new Error('Сначала сохраните ключ OpenAI в настройках приложения.')
+            }
+            return buildAnalysisDocument(transcript, cloudChat(apiKey), {
+              provider: 'openai',
+              model: 'gpt-4o-mini'
+            })
+          })()
     await projects.saveAnalysis(projectId, videoId, document)
     await projects.markAnalysisFresh(projectId, videoId)
     logger.info(`Analysis completed for ${videoId}, blocks=${document.blocks.length}`)
     return document
+  }
+
+  async function runRetell(projectId: string, videoId: string) {
+    const project = await catalog.getProject(projectId)
+    if (!project) throw new Error('Проект не найден.')
+    const transcript = await projects.getTranscript(projectId, videoId)
+    if (!transcript) throw new Error('Сначала распознайте речь.')
+    await license.assertCanStartProcessing()
+    logger.info(`Retell start for ${videoId} (${project.aiMode})`)
+    const document =
+      project.aiMode === 'local'
+        ? await buildRetellDocument(transcript, (request) => localChat(paths, request), {
+            provider: 'local',
+            model: LOCAL_LLM.id
+          })
+        : await (async () => {
+            const apiKey = readOpenAiKey(paths)
+            if (!apiKey) {
+              throw new Error('Сначала сохраните ключ OpenAI в настройках приложения.')
+            }
+            return buildRetellDocument(transcript, cloudChat(apiKey), {
+              provider: 'openai',
+              model: 'gpt-4o-mini'
+            })
+          })()
+    await projects.saveRetell(projectId, videoId, document)
+    await projects.markRetellFresh(projectId, videoId)
+    logger.info(`Retell completed for ${videoId}, chars=${document.text.length}`)
+    return document
+  }
+
+  function sendSetupProgress(step: 'whisper' | 'llm' | 'runtime', label: string, ratio: number): void {
+    getWindow()?.webContents.send('setup:progress', { step, label, ratio })
   }
 
   ipcMain.handle('app:getInfo', async () => {
@@ -302,10 +367,62 @@ export function registerIpc(options: {
     }
   })
 
+  ipcMain.handle('retell:get', async (_event, projectId: string, videoId: string) => {
+    try {
+      return ok(await projects.getRetell(projectId, videoId))
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('visuals:get', async (_event, projectId: string, videoId: string) => {
+    try {
+      return ok(await projects.getVisuals(projectId, videoId))
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('visuals:build', async (_event, projectId: string, videoId: string) => {
+    try {
+      const project = await catalog.getProject(projectId)
+      if (!project) throw new Error('Проект не найден.')
+      const video = (await projects.listVideos(projectId)).find((item) => item.id === videoId)
+      if (!video) throw new Error('Видео не найдено.')
+      if (!video.sourceExists) throw new Error('Исходный файл видео не найден.')
+      await license.assertCanStartProcessing()
+      logger.info(`Visuals start for ${videoId}`)
+      const transcript = await projects.getTranscript(projectId, videoId)
+      const document = await buildVisualsDocument({
+        folderPath: project.folderPath,
+        videoId,
+        sourcePath: video.sourcePath,
+        durationSec: video.durationSec,
+        transcript
+      })
+      logger.info(`Visuals completed for ${videoId}, items=${document.items.length}`)
+      return ok(document)
+    } catch (error) {
+      logger.error(`visuals:build ${videoId}: ${String(error)}`)
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('retell:build', async (_event, projectId: string, videoId: string) => {
+    try {
+      return ok(await runRetell(projectId, videoId))
+    } catch (error) {
+      const code = error instanceof Error && error.cause != null ? ` (${String(error.cause)})` : ''
+      logger.error(`retell:build ${videoId}: ${error instanceof Error ? error.message : String(error)}${code}`)
+      return fail(error)
+    }
+  })
+
   ipcMain.handle(
     'analysis:exportDocx',
-    async (_event, projectId: string, videoIds: string[]) => {
+    async (_event, projectId: string, videoIds: string[], kind: OutlineExportKind = 'plan') => {
       try {
+        const mode: OutlineExportKind = kind === 'conspect' ? 'conspect' : 'plan'
         const project = await catalog.getProject(projectId)
         if (!project) throw new Error('Проект не найден.')
         const videos = await projects.listVideos(projectId)
@@ -316,6 +433,8 @@ export function registerIpc(options: {
           name: string
           durationSec: number | null
           analysis: AnalysisDocument
+          transcript: TranscriptDocument | null
+          retell: Awaited<ReturnType<ProjectStore['getRetell']>>
         }> = []
         for (const videoId of wanted) {
           const video = videos.find((item) => item.id === videoId)
@@ -325,7 +444,9 @@ export function registerIpc(options: {
           payload.push({
             name: video.displayName,
             durationSec: video.durationSec,
-            analysis
+            analysis,
+            transcript: await projects.getTranscript(projectId, video.id),
+            retell: mode === 'conspect' ? await projects.getRetell(projectId, video.id) : null
           })
         }
         if (payload.length === 0) {
@@ -333,12 +454,13 @@ export function registerIpc(options: {
         }
         const suggested = outlineExportFileName(
           project.name,
-          payload.length === 1 ? payload[0].name : undefined
+          payload.length === 1 ? payload[0].name : undefined,
+          mode
         )
         const defaultDir = join(project.folderPath, 'exports')
         mkdirSync(defaultDir, { recursive: true })
         const saveOptions: Electron.SaveDialogOptions = {
-          title: 'Сохранить план',
+          title: mode === 'conspect' ? 'Сохранить конспект' : 'Сохранить план с таймингом',
           defaultPath: join(defaultDir, suggested),
           filters: [{ name: 'Word', extensions: ['docx'] }]
         }
@@ -349,15 +471,136 @@ export function registerIpc(options: {
         if (save.canceled || !save.filePath) {
           return ok({ canceled: true, path: null })
         }
-        const buffer = await buildOutlineDocx({
+        const buffer =
+          mode === 'conspect'
+            ? await buildConspectDocx({ projectName: project.name, videos: payload })
+            : await buildOutlineDocx({ projectName: project.name, videos: payload })
+        writeFileSync(save.filePath, buffer)
+        logger.info(`Outline exported (${mode}): ${save.filePath}`)
+        return ok({ canceled: false, path: save.filePath })
+      } catch (error) {
+        logger.error(`analysis:exportDocx ${String(error)}`)
+        return fail(error)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'transcript:exportDocx',
+    async (_event, projectId: string, videoIds: string[]) => {
+      try {
+        const project = await catalog.getProject(projectId)
+        if (!project) throw new Error('Проект не найден.')
+        const videos = await projects.listVideos(projectId)
+        const wanted = Array.isArray(videoIds) && videoIds.length > 0
+          ? videoIds
+          : videos.filter((item) => item.hasTranscript).map((item) => item.id)
+        const payload: Array<{
+          name: string
+          durationSec: number | null
+          transcript: TranscriptDocument
+        }> = []
+        for (const videoId of wanted) {
+          const video = videos.find((item) => item.id === videoId)
+          if (!video) throw new Error('Видео не найдено.')
+          const transcript = await projects.getTranscript(projectId, video.id)
+          if (!transcript) continue
+          payload.push({
+            name: video.displayName,
+            durationSec: video.durationSec,
+            transcript
+          })
+        }
+        if (payload.length === 0) {
+          throw new Error('Нет готовой расшифровки для экспорта.')
+        }
+        const suggested = transcriptExportFileName(
+          project.name,
+          payload.length === 1 ? payload[0].name : undefined
+        )
+        const defaultDir = join(project.folderPath, 'exports')
+        mkdirSync(defaultDir, { recursive: true })
+        const saveOptions: Electron.SaveDialogOptions = {
+          title: 'Сохранить расшифровку',
+          defaultPath: join(defaultDir, suggested),
+          filters: [{ name: 'Word', extensions: ['docx'] }]
+        }
+        const window = getWindow()
+        const save = window
+          ? await dialog.showSaveDialog(window, saveOptions)
+          : await dialog.showSaveDialog(saveOptions)
+        if (save.canceled || !save.filePath) {
+          return ok({ canceled: true, path: null })
+        }
+        const buffer = await buildTranscriptDocx({
           projectName: project.name,
           videos: payload
         })
         writeFileSync(save.filePath, buffer)
-        logger.info(`Outline exported: ${save.filePath}`)
+        logger.info(`Transcript exported: ${save.filePath}`)
         return ok({ canceled: false, path: save.filePath })
       } catch (error) {
-        logger.error(`analysis:exportDocx ${String(error)}`)
+        logger.error(`transcript:exportDocx ${String(error)}`)
+        return fail(error)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'report:exportDocx',
+    async (_event, projectId: string, videoIds: string[]) => {
+      try {
+        const project = await catalog.getProject(projectId)
+        if (!project) throw new Error('Проект не найден.')
+        const videos = await projects.listVideos(projectId)
+        const wanted = Array.isArray(videoIds) && videoIds.length > 0
+          ? videoIds
+          : videos.map((item) => item.id)
+        const payload: ReportVideo[] = []
+        for (const videoId of wanted) {
+          const video = videos.find((item) => item.id === videoId)
+          if (!video) throw new Error('Видео не найдено.')
+          payload.push({
+            videoId: video.id,
+            name: video.displayName,
+            durationSec: video.durationSec,
+            folderPath: project.folderPath,
+            transcript: await projects.getTranscript(projectId, video.id),
+            analysis: await projects.getAnalysis(projectId, video.id),
+            retell: await projects.getRetell(projectId, video.id),
+            visuals: await projects.getVisuals(projectId, video.id)
+          })
+        }
+        if (payload.length === 0) {
+          throw new Error('В проекте нет видео для отчёта.')
+        }
+        const suggested = reportExportFileName(
+          project.name,
+          payload.length === 1 ? payload[0].name : undefined
+        )
+        const defaultDir = join(project.folderPath, 'exports')
+        mkdirSync(defaultDir, { recursive: true })
+        const saveOptions: Electron.SaveDialogOptions = {
+          title: 'Сохранить полный отчёт',
+          defaultPath: join(defaultDir, suggested),
+          filters: [{ name: 'Word', extensions: ['docx'] }]
+        }
+        const window = getWindow()
+        const save = window
+          ? await dialog.showSaveDialog(window, saveOptions)
+          : await dialog.showSaveDialog(saveOptions)
+        if (save.canceled || !save.filePath) {
+          return ok({ canceled: true, path: null })
+        }
+        const buffer = await buildReportDocx({
+          projectName: project.name,
+          videos: payload
+        })
+        writeFileSync(save.filePath, buffer)
+        logger.info(`Report exported: ${save.filePath}`)
+        return ok({ canceled: false, path: save.filePath })
+      } catch (error) {
+        logger.error(`report:exportDocx ${String(error)}`)
         return fail(error)
       }
     }
@@ -408,7 +651,26 @@ export function registerIpc(options: {
   ipcMain.handle('license:status', async () => {
     try {
       const snapshot = await license.getSnapshot()
-      return ok({ snapshot, capabilities: await license.getCapabilities() })
+      return ok({ snapshot, capabilities: capabilitiesFromLicense(snapshot) })
+    } catch (error) {
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('access:activate', async (_event, accessKey: string) => {
+    try {
+      const snapshot = await license.activate(String(accessKey ?? ''))
+      return ok({ snapshot, capabilities: capabilitiesFromLicense(snapshot) })
+    } catch (error) {
+      logger.error(`access:activate ${error instanceof Error ? error.message : String(error)}`)
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('access:refresh', async () => {
+    try {
+      const snapshot = await license.refresh('manual')
+      return ok({ snapshot, capabilities: capabilitiesFromLicense(snapshot) })
     } catch (error) {
       return fail(error)
     }
@@ -467,9 +729,52 @@ export function registerIpc(options: {
     try {
       const next = parseWhisperModel(model || (await catalog.getSetting('whisper_model')))
       await catalog.setSetting('whisper_model', next)
-      await ensureWhisperModel(paths, next)
+      await ensureWhisperModel(paths, next, (ratio) =>
+        sendSetupProgress('whisper', 'Скачиваем модель распознавания речи', ratio)
+      )
       return ok(await buildAppInfo())
     } catch (error) {
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('settings:downloadLocalLlm', async () => {
+    try {
+      sendSetupProgress('runtime', 'Проверяем локальный AI-runtime', 0.1)
+      if (!(await localRuntimeReady())) {
+        throw new Error('Не удалось запустить локальный AI-runtime (llama.cpp, лицензия MIT).')
+      }
+      await ensureLocalLlm(paths, (ratio) =>
+        sendSetupProgress('llm', `Скачиваем ${LOCAL_LLM.label}`, ratio)
+      )
+      return ok(await buildAppInfo())
+    } catch (error) {
+      logger.error(`settings:downloadLocalLlm ${String(error)}`)
+      return fail(error)
+    }
+  })
+
+  ipcMain.handle('settings:installLocalStack', async () => {
+    try {
+      sendSetupProgress('runtime', 'Проверяем локальный AI-runtime', 0.05)
+      if (!(await localRuntimeReady())) {
+        throw new Error('Не удалось запустить локальный AI-runtime (llama.cpp, лицензия MIT).')
+      }
+      const next = parseWhisperModel(await catalog.getSetting('whisper_model'))
+      if (!whisperStatus(paths, next).whisperModelReady) {
+        await ensureWhisperModel(paths, next, (ratio) =>
+          sendSetupProgress('whisper', 'Скачиваем модель распознавания речи', ratio)
+        )
+      }
+      if (!localLlmFileReady(paths)) {
+        await ensureLocalLlm(paths, (ratio) =>
+          sendSetupProgress('llm', `Скачиваем ${LOCAL_LLM.label}`, ratio)
+        )
+      }
+      sendSetupProgress('runtime', 'Компоненты готовы', 1)
+      return ok(await buildAppInfo())
+    } catch (error) {
+      logger.error(`settings:installLocalStack ${String(error)}`)
       return fail(error)
     }
   })

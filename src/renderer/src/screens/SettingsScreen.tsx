@@ -1,18 +1,29 @@
-import { useState } from 'react'
-import type { AppInfo, WhisperModelId } from '@shared/types'
+import { useEffect, useState } from 'react'
+import type { AppInfo, LicenseSnapshot, SetupProgressEvent, WhisperModelId } from '@shared/types'
 import { t, tf } from '../i18n/ru'
 import { api } from '../lib/api'
 
 interface SettingsScreenProps {
   info: AppInfo | null
+  access?: LicenseSnapshot | null
   onInfoChange?: (info: AppInfo) => void
+  onAccessChange?: (access: LicenseSnapshot) => void
   onToast?: (message: string) => void
 }
 
-export function SettingsScreen({ info, onInfoChange, onToast }: SettingsScreenProps): React.JSX.Element {
+export function SettingsScreen({
+  info,
+  access,
+  onInfoChange,
+  onAccessChange,
+  onToast
+}: SettingsScreenProps): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [keyBusy, setKeyBusy] = useState(false)
+  const [setupBusy, setSetupBusy] = useState(false)
+  const [setupProgress, setSetupProgress] = useState<SetupProgressEvent | null>(null)
+  const [accessBusy, setAccessBusy] = useState(false)
   const rows = info
     ? [
         { label: t('settingsAppData'), path: info.appDataRoot },
@@ -23,6 +34,11 @@ export function SettingsScreen({ info, onInfoChange, onToast }: SettingsScreenPr
         { label: t('settingsCatalog'), path: info.catalogPath }
       ]
     : []
+  const hardware = info?.hardware
+
+  useEffect(() => {
+    return api().onSetupProgress((event) => setSetupProgress(event))
+  }, [])
 
   async function refreshInfo(): Promise<void> {
     const result = await api().getAppInfo()
@@ -82,6 +98,66 @@ export function SettingsScreen({ info, onInfoChange, onToast }: SettingsScreenPr
     onInfoChange?.(result.data)
   }
 
+  function accessStatusLabel(): string {
+    switch (access?.state) {
+      case 'active':
+        return t('accessStatusActive')
+      case 'grace_period':
+        return t('accessStatusGrace')
+      case 'expired':
+        return t('accessStatusExpired')
+      case 'blocked':
+        return t('accessStatusBlocked')
+      default:
+        return t('accessStatusNone')
+    }
+  }
+
+  function formatUntil(iso: string | null | undefined): string {
+    if (!iso) return '—'
+    return new Date(iso).toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
+  }
+
+  async function checkAccess(): Promise<void> {
+    setAccessBusy(true)
+    const result = await api().refreshAccessKey()
+    setAccessBusy(false)
+    if (!result.ok) {
+      onToast?.(result.error)
+      return
+    }
+    onAccessChange?.(result.data.snapshot)
+  }
+
+  async function installStack(): Promise<void> {
+    setSetupBusy(true)
+    setSetupProgress({ step: 'runtime', label: t('setupInstalling'), ratio: 0.02 })
+    const result = await api().installLocalStack()
+    setSetupBusy(false)
+    if (!result.ok) {
+      onToast?.(result.error)
+      return
+    }
+    onInfoChange?.(result.data)
+    onToast?.(t('settingsModelReady'))
+  }
+
+  async function downloadLlm(): Promise<void> {
+    setSetupBusy(true)
+    const result = await api().downloadLocalLlm()
+    setSetupBusy(false)
+    if (!result.ok) {
+      onToast?.(result.error)
+      return
+    }
+    onInfoChange?.(result.data)
+    onToast?.(t('settingsModelReady'))
+  }
+
   async function downloadModel(): Promise<void> {
     if (!info) return
     setBusy(true)
@@ -101,6 +177,122 @@ export function SettingsScreen({ info, onInfoChange, onToast }: SettingsScreenPr
         <h1>{t('settingsTitle')}</h1>
       </div>
       <div className="settings-grid">
+        <article className="settings-card">
+          <h2>{t('accessTitle')}</h2>
+          <p>{t('accessBetaName')}</p>
+          <div className="setup-list">
+            <div className="setup-row">
+              <span>{t('accessStatus')}</span>
+              <strong className={access?.state === 'active' || access?.state === 'grace_period' ? 'setup-ok' : 'setup-warn'}>
+                {accessStatusLabel()}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('accessLeft')}</span>
+              <strong>{access?.daysLeft != null ? tf('accessDays', { count: access.daysLeft }) : '—'}</strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('accessUntil')}</span>
+              <strong>{formatUntil(access?.expiresAt)}</strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('accessKeyLabel')}</span>
+              <strong>{access?.licenseKeyMasked ?? '—'}</strong>
+            </div>
+          </div>
+          <div className="card-actions wrap" style={{ marginTop: 16 }}>
+            <button type="button" className="ghost" disabled={accessBusy} onClick={() => void checkAccess()}>
+              {accessBusy ? t('accessChecking') : t('accessCheck')}
+            </button>
+          </div>
+        </article>
+        <article className="settings-card">
+          <h2>{t('setupTitle')}</h2>
+          <p className="muted">{t('setupHint')}</p>
+          <div className="setup-list">
+            <div className="setup-row">
+              <span>{t('setupFfmpeg')}</span>
+              <strong className={info?.ffmpegReady ? 'setup-ok' : 'setup-bad'}>
+                {info?.ffmpegReady ? t('setupReady') : t('setupMissing')}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupFfprobe')}</span>
+              <strong className={info?.ffprobeReady ? 'setup-ok' : 'setup-bad'}>
+                {info?.ffprobeReady ? t('setupReady') : t('setupMissing')}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupWhisper')}</span>
+              <strong className={info?.whisperReady && info.whisperModelReady ? 'setup-ok' : 'setup-bad'}>
+                {info?.whisperReady && info.whisperModelReady ? t('setupReady') : t('setupMissing')}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupRuntime')}</span>
+              <strong className={info?.localRuntimeReady ? 'setup-ok' : 'setup-bad'}>
+                {info?.localRuntimeReady ? t('setupReady') : t('setupMissing')}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>
+                {t('setupLlm')}
+                {info?.localLlmLabel ? ` · ${info.localLlmLabel} (${info.localLlmSizeLabel})` : ''}
+              </span>
+              <strong className={info?.localLlmReady ? 'setup-ok' : 'setup-bad'}>
+                {info?.localLlmReady ? t('setupReady') : t('setupMissing')}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupRam')}</span>
+              <strong className={hardware?.ramOk ? 'setup-ok' : 'setup-warn'}>
+                {hardware
+                  ? `${tf('setupRamValue', { total: hardware.ramTotalGb, free: hardware.ramFreeGb })}${
+                      hardware.ramOk ? '' : ` · ${t('setupNeedRam')}`
+                    }`
+                  : '—'}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupDisk')}</span>
+              <strong className={hardware?.diskOk ? 'setup-ok' : 'setup-warn'}>
+                {hardware
+                  ? `${tf('setupDiskValue', { free: hardware.diskFreeGb })}${
+                      hardware.diskOk ? '' : ` · ${t('setupNeedDisk')}`
+                    }`
+                  : '—'}
+              </strong>
+            </div>
+            <div className="setup-row">
+              <span>{t('setupGpu')}</span>
+              <strong className="setup-ok">{hardware?.gpuName || t('setupGpuNone')}</strong>
+            </div>
+          </div>
+          {setupBusy && setupProgress ? (
+            <div style={{ marginTop: 12 }}>
+              <p className="muted">{setupProgress.label}</p>
+              <div className="progress-track">
+                <div
+                  className="progress-bar"
+                  style={{ width: `${Math.max(6, Math.round(setupProgress.ratio * 100))}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          <div className="card-actions wrap" style={{ marginTop: 16 }}>
+            <button type="button" className="primary" disabled={setupBusy} onClick={() => void installStack()}>
+              {setupBusy ? t('setupInstalling') : t('setupInstall')}
+            </button>
+            {!info?.localLlmReady ? (
+              <button type="button" className="ghost" disabled={setupBusy} onClick={() => void downloadLlm()}>
+                {t('setupDownloadLlm')}
+              </button>
+            ) : null}
+          </div>
+          <p className="muted" style={{ marginTop: 14 }}>
+            {t('setupLicense')}
+          </p>
+        </article>
         <article className="settings-card">
           <h2>{t('settingsVersion')}</h2>
           <p>

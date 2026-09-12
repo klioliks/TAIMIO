@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pause, RefreshCw } from 'lucide-react'
+import { Download, Pause, RefreshCw } from 'lucide-react'
 import type { PipelineProgressEvent, ProjectSummary, TranscriptDocument, VideoItem } from '@shared/types'
 import { displayTranscriptText, estimateTimeFromBodyOffset, findTextOffset } from '@shared/transcriptText'
 import { ProcessingVisual } from '../components/ProcessingVisual'
@@ -25,6 +25,9 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
   const [liveProgress, setLiveProgress] = useState<number | null>(null)
   const [liveEta, setLiveEta] = useState<string | null>(null)
   const [senseBusy, setSenseBusy] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportIds, setExportIds] = useState<string[]>([])
   const playerRef = useRef<HTMLVideoElement | null>(null)
   const textRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -32,6 +35,7 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
     () => videos.find((item) => item.id === selectedId) ?? null,
     [videos, selectedId]
   )
+  const transcribedVideos = useMemo(() => videos.filter((item) => item.hasTranscript), [videos])
 
   async function refreshVideos(): Promise<VideoItem[]> {
     const result = await api().listVideos(project.id)
@@ -120,6 +124,61 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
     if (!player) return
     player.currentTime = Math.max(0, seconds)
     void player.play().catch(() => undefined)
+  }
+
+  async function exportDocx(videoIds: string[]): Promise<void> {
+    setExportBusy(true)
+    const result = await api().exportTranscriptDocx(project.id, videoIds)
+    setExportBusy(false)
+    if (!result.ok) {
+      onToast(result.error)
+      return
+    }
+    if (result.data.canceled) return
+    setExportOpen(false)
+    onToast(t('transcriptExported'))
+  }
+
+  function startExport(): void {
+    if (transcribedVideos.length === 0) {
+      onToast(t('transcriptExportEmpty'))
+      return
+    }
+    if (transcribedVideos.length === 1) {
+      void exportDocx([transcribedVideos[0].id])
+      return
+    }
+    const initial =
+      selected?.hasTranscript ? [selected.id] : transcribedVideos.map((item) => item.id)
+    setExportIds(initial)
+    setExportOpen(true)
+  }
+
+  function toggleExportId(videoId: string): void {
+    setExportIds((current) =>
+      current.includes(videoId)
+        ? current.filter((id) => id !== videoId)
+        : [...current, videoId]
+    )
+  }
+
+  function toggleExportAll(): void {
+    setExportIds((current) =>
+      current.length === transcribedVideos.length
+        ? []
+        : transcribedVideos.map((item) => item.id)
+    )
+  }
+
+  function confirmExport(): void {
+    if (exportIds.length === 0) {
+      onToast(t('transcriptExportNeedPick'))
+      return
+    }
+    const ordered = transcribedVideos
+      .map((item) => item.id)
+      .filter((id) => exportIds.includes(id))
+    void exportDocx(ordered)
   }
 
   function seekFromCaret(): void {
@@ -265,7 +324,7 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
               >
                 <strong>{video.displayName}</strong>
                 <span className="muted">
-                  {video.analysisStale ? 'Есть правки · ' : ''}
+                  {video.analysisStale || video.retellStale ? 'Есть правки · ' : ''}
                   {video.currentStageLabel || videoStatusLabel(video.status, video.hasTranscript)}
                 </span>
                 {(video.status === 'probing' ||
@@ -347,7 +406,9 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
 
                 {!showProcessing && doc && selected.hasTranscript ? (
                   <>
-                    {doc.analysisStale ? <p className="stale-banner">{t('transcriptStale')}</p> : null}
+                    {doc.analysisStale || doc.retellStale ? (
+                      <p className="stale-banner">{t('transcriptStale')}</p>
+                    ) : null}
                     <div className="transcript-toolbar">
                       <input
                         value={query}
@@ -381,6 +442,15 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
                           {senseBusy ? t('searchWorking') : t('transcriptFindSense')}
                         </button>
                       ) : null}
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={exportBusy || transcribedVideos.length === 0}
+                        onClick={startExport}
+                      >
+                        <Download size={14} style={{ marginRight: 6 }} />
+                        {t('transcriptDownload')}
+                      </button>
                       <button
                         type="button"
                         className="ghost"
@@ -432,6 +502,58 @@ export function TranscriptPanel({ project, onToast }: TranscriptPanelProps): Rea
           </div>
         </div>
       )}
+
+      {exportOpen ? (
+        <div className="overlay" onMouseDown={() => setExportOpen(false)}>
+          <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2>{t('transcriptExportTitle')}</h2>
+            <p className="muted">{t('transcriptExportHint')}</p>
+            <div className="mode-grid" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className={
+                  exportIds.length === transcribedVideos.length ? 'mode-card selected' : 'mode-card'
+                }
+                onClick={toggleExportAll}
+              >
+                <strong>{t('transcriptExportAll')}</strong>
+                <p className="muted">{t('transcriptExportAllHint')}</p>
+              </button>
+              {transcribedVideos.map((video) => {
+                const checked = exportIds.includes(video.id)
+                return (
+                  <button
+                    key={video.id}
+                    type="button"
+                    className={checked ? 'mode-card selected' : 'mode-card'}
+                    onClick={() => toggleExportId(video.id)}
+                  >
+                    <span className="outline-export-row">
+                      <span className={checked ? 'outline-check on' : 'outline-check'} aria-hidden="true">
+                        {checked ? '✓' : ''}
+                      </span>
+                      <strong>{video.displayName}</strong>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="ghost" onClick={() => setExportOpen(false)}>
+                {t('cancel')}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={exportBusy || exportIds.length === 0}
+                onClick={confirmExport}
+              >
+                {t('transcriptExportConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

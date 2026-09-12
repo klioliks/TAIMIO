@@ -9,8 +9,8 @@ import { ProjectStore } from './projectStore'
 import { PipelineService } from './pipeline'
 import { registerIpc } from './ipc'
 import { serveLocalMedia } from './mediaProtocol'
-import { AlwaysValidLicenseProvider } from './license/alwaysValidLicenseProvider'
 import { LicenseService } from './license/licenseService'
+import { TaimioAccessProvider } from './license/taimioAccessProvider'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -91,7 +91,16 @@ app.whenReady().then(async () => {
   const logger = new FileLogger(paths.logsDir)
   const catalog = new CatalogStore(paths, logger)
   const projects = new ProjectStore(catalog, logger)
-  const license = new LicenseService(new AlwaysValidLicenseProvider())
+  const license = new LicenseService(new TaimioAccessProvider(paths))
+  await license.refresh('startup').catch((error) => {
+    logger.error(`access refresh on startup: ${error instanceof Error ? error.message : String(error)}`)
+  })
+  const accessTimer = setInterval(() => {
+    void license.refresh('periodic').catch((error) => {
+      logger.error(`access periodic refresh: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }, 6 * 60 * 60 * 1000)
+  accessTimer.unref?.()
   const pipeline = new PipelineService(projects, catalog, paths, logger, () => mainWindow, license)
   await projects.markInterrupted()
   logger.info(`TAIMIO started, data root ${paths.appDataRoot}`)

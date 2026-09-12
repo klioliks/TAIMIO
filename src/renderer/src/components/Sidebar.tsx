@@ -54,13 +54,13 @@ export function Sidebar({ view, workspaceTab, compact, onNavigate }: SidebarProp
     { id: 'video', label: t('navVideo'), icon: Clapperboard, action: () => onNavigate('workspace', 'video') },
     { id: 'search', label: t('navSearch'), icon: Search, action: () => onNavigate('workspace', 'search') },
     { id: 'visuals', label: t('navVisuals'), icon: Image, action: () => onNavigate('workspace', 'visuals') },
-    { id: 'outline', label: t('navOutline'), icon: FileText, action: () => onNavigate('workspace', 'outline') },
     {
       id: 'transcript',
       label: t('navTranscript'),
       icon: ScrollText,
       action: () => onNavigate('workspace', 'transcript')
     },
+    { id: 'outline', label: t('navOutline'), icon: FileText, action: () => onNavigate('workspace', 'outline') },
     { id: 'settings', label: t('navProjectSettings'), icon: Settings, action: () => onNavigate('workspace', 'project-settings') }
   ]
 

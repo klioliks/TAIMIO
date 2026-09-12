@@ -1,0 +1,5 @@
+.dev.vars
+secrets/
+issued/
+node_modules/
+.wrangler/

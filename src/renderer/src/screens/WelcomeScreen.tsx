@@ -7,7 +7,9 @@ import {
   Search,
   ShieldCheck
 } from 'lucide-react'
+import { useState } from 'react'
 import logo from '../assets/taimio-logo.png'
+import { AboutModal } from '../components/AboutModal'
 import { t } from '../i18n/ru'
 
 interface WelcomeScreenProps {
@@ -16,6 +18,7 @@ interface WelcomeScreenProps {
 }
 
 export function WelcomeScreen({ onNewProject, onOpenProjects }: WelcomeScreenProps): React.JSX.Element {
+  const [aboutOpen, setAboutOpen] = useState(false)
   const features = [
     { title: t('featureTranscript'), hint: t('featureTranscriptHint'), icon: FileText },
     { title: t('featureOutline'), hint: t('featureOutlineHint'), icon: ListTree },
@@ -72,7 +75,14 @@ export function WelcomeScreen({ onNewProject, onOpenProjects }: WelcomeScreenPro
         <span className="active">{t('pipelineKnowledge')}</span>
         <span>{t('pipelineYou')}</span>
       </div>
-      <p className="handwritten bottom-right">{t('handwrittenTime')}</p>
+      <div className="welcome-footer">
+        <button type="button" className="welcome-script welcome-about" onClick={() => setAboutOpen(true)}>
+          {t('aboutOpen')}
+        </button>
+        <p className="welcome-script welcome-time">{t('handwrittenTime')}</p>
+        <p className="welcome-beta">{t('welcomeBeta')}</p>
+      </div>
+      {aboutOpen ? <AboutModal onClose={() => setAboutOpen(false)} /> : null}
     </section>
   )
 }

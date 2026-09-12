@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import type { AiMode, ProjectSummary } from '@shared/types'
+import type { AiMode, AppInfo, ProjectSummary } from '@shared/types'
 import { api } from '../lib/api'
 import { t } from '../i18n/ru'
 
 interface ProjectSettingsPanelProps {
   project: ProjectSummary
+  info: AppInfo | null
   onProjectChange: (project: ProjectSummary) => void
   onToast: (message: string) => void
 }
 
 export function ProjectSettingsPanel({
   project,
+  info,
   onProjectChange,
   onToast
 }: ProjectSettingsPanelProps): React.JSX.Element {
@@ -54,6 +56,11 @@ export function ProjectSettingsPanel({
             <p className="muted">{t('projectSettingsLocalWarn')}</p>
           </button>
         </div>
+        {project.aiMode === 'local' && !info?.localLlmReady ? (
+          <p className="search-local-note" style={{ marginTop: 16 }}>
+            {t('projectSettingsLocalNeedModel')}
+          </p>
+        ) : null}
       </article>
 
       <article className="settings-card">
@@ -82,7 +89,7 @@ export function ProjectSettingsPanel({
             </tr>
             <tr>
               <td>{t('privacyResults')}</td>
-              <td>{t('privacyStay')}</td>
+              <td>{t('privacyLocal')}</td>
             </tr>
           </tbody>
         </table>

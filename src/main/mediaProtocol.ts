@@ -9,7 +9,11 @@ const MIME: Record<string, string> = {
   '.mkv': 'video/x-matroska',
   '.mov': 'video/quicktime',
   '.avi': 'video/x-msvideo',
-  '.ogv': 'video/ogg'
+  '.ogv': 'video/ogg',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp'
 }
 
 export function serveLocalMedia(filePath: string, request: Request): Response {

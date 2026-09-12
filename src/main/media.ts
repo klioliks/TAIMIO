@@ -209,6 +209,65 @@ export async function extractAudio(
   }
 }
 
+export async function extractFrame(
+  jobId: string,
+  inputPath: string,
+  outputPath: string,
+  seconds: number
+): Promise<void> {
+  if (!existsSync(inputPath)) {
+    throw new Error('Исходный видеофайл не найден. Укажите файл заново.')
+  }
+  const ffmpeg = getFfmpegPath()
+  if (!ffmpeg) {
+    throw new Error('FFmpeg не найден. Переустановите TAIMIO или проверьте компоненты.')
+  }
+  mkdirSync(dirname(outputPath), { recursive: true })
+  const result = await runProcess(jobId, ffmpeg, [
+    '-y',
+    '-ss',
+    String(Math.max(0, seconds)),
+    '-i',
+    inputPath,
+    '-frames:v',
+    '1',
+    '-q:v',
+    '3',
+    outputPath
+  ])
+  if (result.code !== 0 || !existsSync(outputPath)) {
+    throw new Error('Не удалось сохранить кадр из видео.')
+  }
+}
+
+export async function detectSceneCuts(
+  jobId: string,
+  inputPath: string,
+  durationSec?: number | null
+): Promise<number[]> {
+  const ffmpeg = getFfmpegPath()
+  if (!ffmpeg || !existsSync(inputPath)) return []
+  const args = ['-hide_banner', '-an']
+  if (durationSec && durationSec > 40 * 60) {
+    args.push('-t', String(40 * 60))
+  }
+  args.push('-i', inputPath, '-vf', "fps=2,select='gt(scene,0.28)',showinfo", '-f', 'null', '-')
+  try {
+    const result = await runProcess(jobId, ffmpeg, args)
+    const times: number[] = []
+    const blob = `${result.stderr}\n${result.stdout}`
+    const regex = /pts_time:(\d+(?:\.\d+)?)/g
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(blob)) != null) {
+      const value = Number(match[1])
+      if (Number.isFinite(value) && value >= 0) times.push(value)
+    }
+    return times
+  } catch {
+    return []
+  }
+}
+
 export async function probeAudioChannels(jobId: string, inputPath: string): Promise<number> {
   const ffprobe = getFfprobePath()
   if (!ffprobe) return 1

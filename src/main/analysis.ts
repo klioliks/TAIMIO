@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { AnalysisBlock, AnalysisDocument, TranscriptDocument, TranscriptSegment } from '../shared/types'
+import { rematchOutlineBlocks } from '../shared/outlineAlign'
 import { displayTranscriptText } from '../shared/transcriptText'
-import { chatJson } from './openaiProvider'
+import type { AiChatFn } from './aiChat'
 
 const CHUNK_CHARS = 12000
 const DEFAULT_MODEL = 'gpt-4o-mini'
@@ -11,9 +12,13 @@ const DEFAULT_MODEL = 'gpt-4o-mini'
 const SYSTEM = `Ты составляешь конспект видео только по расшифровке.
 Не выдумывай факты, имена, цифры и выводы, которых нет в тексте.
 Дели на смысловые темы, а не на случайные абзацы.
+У каждого блока start и end бери ТОЛЬКО из таймкодов строк расшифровки, которые относятся к этой теме.
+Не схлопывай разные темы в одну секунду: у каждой темы свои start/end.
+Не добавляй формальное «Заключение» с фразами вроде «подведение итогов» или «благодарность за внимание», если этого не говорили.
+Если в конце есть прощание (спасибо, пока, на этом всё) — это последний блок, и его start/end бери только из этих последних строк, не из середины видео.
 Верни JSON вида:
 {"blocks":[{"start":0,"end":45,"title":"главная мысль","theses":["тезис 1","тезис 2"]}]}
-start и end — секунды по таймкодам фрагментов. theses — 2–5 коротких пунктов.`
+start и end — секунды. theses — 2–5 коротких пунктов.`
 
 export function analysisPath(folderPath: string, videoId: string): string {
   return join(folderPath, 'videos', videoId, 'analysis', 'outline.json')
@@ -44,14 +49,14 @@ function formatClock(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-function chunkSegments(segments: TranscriptSegment[]): TranscriptSegment[][] {
+function chunkSegments(segments: TranscriptSegment[], limit = CHUNK_CHARS): TranscriptSegment[][] {
   if (segments.length === 0) return []
   const chunks: TranscriptSegment[][] = []
   let current: TranscriptSegment[] = []
   let size = 0
   for (const segment of segments) {
     const next = segment.text.length + 16
-    if (current.length > 0 && size + next > CHUNK_CHARS) {
+    if (current.length > 0 && size + next > limit) {
       chunks.push(current)
       current = []
       size = 0
@@ -106,8 +111,11 @@ function parseBlocks(raw: string, segments: TranscriptSegment[]): AnalysisBlock[
 
 export async function buildAnalysisDocument(
   transcript: TranscriptDocument,
-  apiKey: string,
-  model = DEFAULT_MODEL
+  chat: AiChatFn,
+  meta: { provider: string; model?: string; chunkChars?: number } = {
+    provider: 'openai',
+    model: DEFAULT_MODEL
+  }
 ): Promise<AnalysisDocument> {
   const text = displayTranscriptText(transcript).trim()
   if (!text) throw new Error('В расшифровке нет текста для конспекта.')
@@ -126,12 +134,11 @@ export async function buildAnalysisDocument(
           }
         ]
 
-  const chunks = chunkSegments(usable)
+  const chunks = chunkSegments(usable, meta.chunkChars ?? CHUNK_CHARS)
   const blocks: AnalysisBlock[] = []
   for (const chunk of chunks) {
-    const raw = await chatJson({
-      apiKey,
-      model,
+    const raw = await chat({
+      json: true,
       system: SYSTEM,
       user: `Составь конспект по этому фрагменту расшифровки:\n\n${renderChunk(chunk)}`
     })
@@ -142,12 +149,13 @@ export async function buildAnalysisDocument(
     throw new Error('Конспект получился пустым. Попробуйте ещё раз.')
   }
 
+  const aligned = rematchOutlineBlocks(blocks, usable)
   const now = new Date().toISOString()
   return {
     videoId: transcript.videoId,
-    provider: 'openai',
-    model,
-    blocks: blocks.sort((a, b) => a.start - b.start),
+    provider: meta.provider,
+    model: meta.model ?? DEFAULT_MODEL,
+    blocks: aligned,
     createdAt: now,
     updatedAt: now
   }

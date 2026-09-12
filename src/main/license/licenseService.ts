@@ -6,10 +6,6 @@ import {
 } from '../../shared/license'
 import type { LicenseProvider } from './licenseProvider'
 
-/**
- * Фасад для остального приложения. Модули спрашивают только snapshot / capabilities.
- * Сменить провайдера (заглушка → внешний сервис) можно здесь, без правок STT/UI/OpenAI.
- */
 export class LicenseService {
   constructor(private readonly provider: LicenseProvider) {}
 
@@ -25,11 +21,23 @@ export class LicenseService {
     return this.provider.refresh(reason)
   }
 
+  async activate(accessKey: string): Promise<LicenseSnapshot> {
+    if (!this.provider.activate) {
+      throw new Error('Активация ключа недоступна.')
+    }
+    return this.provider.activate(accessKey)
+  }
+
   async assertCanStartProcessing(): Promise<void> {
-    const caps = await this.getCapabilities()
+    const snapshot = await this.getSnapshot()
+    const caps = capabilitiesFromLicense(snapshot)
     if (caps.canStartNewProcessing) return
-    throw new Error(
-      'Срок лицензии истёк. Уже готовые проекты и расшифровки доступны, новую обработку видео запустить нельзя.'
-    )
+    if (snapshot.state === 'blocked') {
+      throw new Error('Этот ключ заблокирован.')
+    }
+    if (snapshot.state === 'expired') {
+      throw new Error('Срок действия вашего ключа TAIMIO Beta закончился.')
+    }
+    throw new Error('Сначала активируйте ключ доступа.')
   }
 }

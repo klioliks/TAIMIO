@@ -18,7 +18,9 @@ import { videoArtifactDir } from './ffmpegPaths'
 import { transcriptPath } from './whisper'
 import { joinTranscriptText } from '../shared/transcriptText'
 import { readAnalysisFile, writeAnalysisFile } from './analysis'
-import type { AnalysisDocument } from '../shared/types'
+import { readRetellFile, writeRetellFile } from './retell'
+import { readVisualsForUi, readVisualsFile } from './visuals'
+import type { AnalysisDocument, RetellDocument, VisualDocument } from '../shared/types'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -302,6 +304,7 @@ export class ProjectStore {
         // Аудио готово, расшифровка ещё не запускалась — оставляем ready без hasTranscript.
       }
     }
+    const hasRetell = Boolean(readRetellFile(folderPath, String(row.id)))
     return {
       id: String(row.id),
       projectId,
@@ -325,6 +328,12 @@ export class ProjectStore {
       hasTranscript: Boolean(transcript),
       hasAnalysis: Boolean(readAnalysisFile(folderPath, String(row.id))),
       analysisStale: Boolean(transcript?.analysisStale),
+      hasRetell,
+      hasVisuals: Boolean(readVisualsFile(folderPath, String(row.id))),
+      retellStale:
+        transcript?.retellStale != null
+          ? Boolean(transcript.retellStale)
+          : Boolean(transcript?.analysisStale && hasRetell),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     }
@@ -704,6 +713,7 @@ export class ProjectStore {
         ...existing,
         bodyText: nextBody,
         analysisStale: changed || existing.analysisStale,
+        retellStale: changed || Boolean(existing.retellStale),
         updatedAt: nowIso()
       }
       writeTranscriptFile(project.folderPath, videoId, doc)
@@ -719,6 +729,23 @@ export class ProjectStore {
       const doc: TranscriptDocument = {
         ...existing,
         analysisStale: false,
+        retellStale: Boolean(existing.retellStale),
+        updatedAt: nowIso()
+      }
+      writeTranscriptFile(project.folderPath, videoId, doc)
+      return doc
+    })
+  }
+
+  markRetellFresh(projectId: string, videoId: string): Promise<TranscriptDocument> {
+    return this.enqueue(async () => {
+      const project = await this.requireProject(projectId)
+      const existing = readTranscriptFile(project.folderPath, videoId)
+      if (!existing) throw new Error('Расшифровка ещё не готова.')
+      const doc: TranscriptDocument = {
+        ...existing,
+        retellStale: false,
+        analysisStale: Boolean(existing.analysisStale),
         updatedAt: nowIso()
       }
       writeTranscriptFile(project.folderPath, videoId, doc)
@@ -737,6 +764,27 @@ export class ProjectStore {
     return this.enqueue(async () => {
       const project = await this.requireProject(projectId)
       writeAnalysisFile(project.folderPath, videoId, doc)
+    })
+  }
+
+  getRetell(projectId: string, videoId: string): Promise<RetellDocument | null> {
+    return this.enqueue(async () => {
+      const project = await this.requireProject(projectId)
+      return readRetellFile(project.folderPath, videoId)
+    })
+  }
+
+  getVisuals(projectId: string, videoId: string): Promise<VisualDocument | null> {
+    return this.enqueue(async () => {
+      const project = await this.requireProject(projectId)
+      return readVisualsForUi(project.folderPath, videoId)
+    })
+  }
+
+  saveRetell(projectId: string, videoId: string, doc: RetellDocument): Promise<void> {
+    return this.enqueue(async () => {
+      const project = await this.requireProject(projectId)
+      writeRetellFile(project.folderPath, videoId, doc)
     })
   }
 

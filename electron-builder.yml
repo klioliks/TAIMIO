@@ -12,6 +12,7 @@ files:
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!*.md'
+  - '!key-service/**'
 extraResources:
   - from: node_modules/sql.js/dist/sql-wasm.wasm
     to: sql-wasm.wasm
@@ -21,6 +22,8 @@ asarUnpack:
   - resources/**
   - node_modules/ffmpeg-static/**
   - node_modules/ffprobe-static/**
+  - node_modules/node-llama-cpp/**
+  - node_modules/@node-llama-cpp/**
 win:
   executableName: TAIMIO
   icon: build/icon.png

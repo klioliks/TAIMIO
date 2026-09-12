@@ -34,6 +34,21 @@ export interface ProjectSummary {
   lastOpenedAt: string
 }
 
+export interface HardwareInfo {
+  ramTotalGb: number
+  ramFreeGb: number
+  ramOk: boolean
+  diskFreeGb: number
+  diskOk: boolean
+  gpuName: string | null
+}
+
+export interface SetupProgressEvent {
+  step: 'whisper' | 'llm' | 'runtime'
+  label: string
+  ratio: number
+}
+
 export interface AppInfo {
   version: string
   appName: string
@@ -52,6 +67,11 @@ export interface AppInfo {
   whisperModel: WhisperModelId
   openaiKeySet: boolean
   openaiKeyMasked: string | null
+  localRuntimeReady: boolean
+  localLlmReady: boolean
+  localLlmLabel: string
+  localLlmSizeLabel: string
+  hardware: HardwareInfo
 }
 
 export interface CreateProjectInput {
@@ -102,6 +122,9 @@ export interface VideoItem {
   hasTranscript: boolean
   hasAnalysis: boolean
   analysisStale: boolean
+  hasRetell: boolean
+  retellStale: boolean
+  hasVisuals: boolean
   createdAt: string
   updatedAt: string
 }
@@ -120,6 +143,7 @@ export interface TranscriptDocument {
   language: string
   model: string
   analysisStale: boolean
+  retellStale: boolean
   /** Сплошной текст для пользователя. Сегменты с таймкодами хранятся отдельно «под капотом». */
   bodyText: string | null
   segments: TranscriptSegment[]
@@ -140,6 +164,36 @@ export interface AnalysisDocument {
   provider: string
   model: string
   blocks: AnalysisBlock[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type VisualSource = 'transcript' | 'scene' | 'sample'
+
+export interface VisualItem {
+  id: string
+  videoId: string
+  start: number
+  fileName: string
+  imageUrl: string | null
+  description: string
+  source: VisualSource
+}
+
+export interface VisualDocument {
+  videoId: string
+  items: VisualItem[]
+  sourceUpdatedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RetellDocument {
+  videoId: string
+  provider: string
+  model: string
+  text: string
+  sourceUpdatedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -201,7 +255,20 @@ export interface TaimioApi {
   ) => Promise<Result<TranscriptDocument>>
   rebuildAnalysis: (projectId: string, videoId: string) => Promise<Result<AnalysisDocument>>
   getAnalysis: (projectId: string, videoId: string) => Promise<Result<AnalysisDocument | null>>
+  rebuildRetell: (projectId: string, videoId: string) => Promise<Result<RetellDocument>>
+  getRetell: (projectId: string, videoId: string) => Promise<Result<RetellDocument | null>>
+  getVisuals: (projectId: string, videoId: string) => Promise<Result<VisualDocument | null>>
+  rebuildVisuals: (projectId: string, videoId: string) => Promise<Result<VisualDocument>>
   exportOutlineDocx: (
+    projectId: string,
+    videoIds: string[],
+    kind?: 'plan' | 'conspect'
+  ) => Promise<Result<{ canceled: boolean; path: string | null }>>
+  exportTranscriptDocx: (
+    projectId: string,
+    videoIds: string[]
+  ) => Promise<Result<{ canceled: boolean; path: string | null }>>
+  exportReportDocx: (
     projectId: string,
     videoIds: string[]
   ) => Promise<Result<{ canceled: boolean; path: string | null }>>
@@ -216,8 +283,13 @@ export interface TaimioApi {
     videoId?: string | null
   ) => Promise<Result<SearchResponse>>
   getLicenseStatus: () => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
+  activateAccessKey: (accessKey: string) => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
+  refreshAccessKey: () => Promise<Result<{ snapshot: LicenseSnapshot; capabilities: LicenseCapabilities }>>
   setWhisperModel: (model: WhisperModelId) => Promise<Result<AppInfo>>
   downloadWhisperModel: (model?: WhisperModelId) => Promise<Result<AppInfo>>
+  downloadLocalLlm: () => Promise<Result<AppInfo>>
+  installLocalStack: () => Promise<Result<AppInfo>>
+  onSetupProgress: (handler: (event: SetupProgressEvent) => void) => () => void
   openExternalPath: (targetPath: string) => Promise<Result<boolean>>
   openExternalUrl: (url: string) => Promise<Result<boolean>>
   getPathForFile: (file: File) => string

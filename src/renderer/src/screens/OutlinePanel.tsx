@@ -1,25 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Download, RefreshCw } from 'lucide-react'
-import type { AnalysisDocument, ProjectSummary, VideoItem } from '@shared/types'
-import { assembleBlockText } from '@shared/outlineText'
+import { Download, RefreshCw } from 'lucide-react'
+import type {
+  AnalysisDocument,
+  AppInfo,
+  ProjectSummary,
+  RetellDocument,
+  TranscriptDocument,
+  VideoItem
+} from '@shared/types'
+import { findOutlineSeekTime, rematchOutlineBlocks } from '@shared/outlineAlign'
 import { VideoPlayer } from '../components/VideoPlayer'
 import { api } from '../lib/api'
-import { formatTimecode, videoStatusLabel } from '../lib/format'
+import { videoStatusLabel } from '../lib/format'
 import { t } from '../i18n/ru'
 
 interface OutlinePanelProps {
   project: ProjectSummary
+  info: AppInfo | null
   onToast: (message: string) => void
 }
 
-export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX.Element {
+export function OutlinePanel({ project, info, onToast }: OutlinePanelProps): React.JSX.Element {
   const [videos, setVideos] = useState<VideoItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [doc, setDoc] = useState<AnalysisDocument | null>(null)
+  const [retell, setRetell] = useState<RetellDocument | null>(null)
+  const [transcript, setTranscript] = useState<TranscriptDocument | null>(null)
   const [busy, setBusy] = useState(false)
+  const [retellBusy, setRetellBusy] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
-  const [exportChoice, setExportChoice] = useState<'all' | string>('all')
+  const [exportIds, setExportIds] = useState<string[]>([])
+  const [exportKind, setExportKind] = useState<'plan' | 'conspect'>('plan')
   const playerRef = useRef<HTMLVideoElement | null>(null)
 
   const selected = useMemo(
@@ -27,6 +39,11 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
     [videos, selectedId]
   )
   const analyzedVideos = useMemo(() => videos.filter((item) => item.hasAnalysis), [videos])
+  const alignedBlocks = useMemo(() => {
+    if (!doc?.blocks.length) return []
+    if (!transcript?.segments.length) return doc.blocks
+    return rematchOutlineBlocks(doc.blocks, transcript.segments)
+  }, [doc, transcript])
 
   async function refreshVideos(): Promise<VideoItem[]> {
     const result = await api().listVideos(project.id)
@@ -43,12 +60,26 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
   }
 
   async function loadAnalysis(videoId: string): Promise<void> {
-    const result = await api().getAnalysis(project.id, videoId)
-    if (!result.ok) {
-      onToast(result.error)
+    const [analysisResult, retellResult, transcriptResult] = await Promise.all([
+      api().getAnalysis(project.id, videoId),
+      api().getRetell(project.id, videoId),
+      api().getTranscript(project.id, videoId)
+    ])
+    if (!analysisResult.ok) {
+      onToast(analysisResult.error)
       return
     }
-    setDoc(result.data)
+    if (!retellResult.ok) {
+      onToast(retellResult.error)
+      return
+    }
+    if (!transcriptResult.ok) {
+      onToast(transcriptResult.error)
+      return
+    }
+    setDoc(analysisResult.data)
+    setRetell(retellResult.data)
+    setTranscript(transcriptResult.data)
   }
 
   useEffect(() => {
@@ -58,6 +89,8 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
   useEffect(() => {
     if (!selectedId) {
       setDoc(null)
+      setRetell(null)
+      setTranscript(null)
       return
     }
     void loadAnalysis(selectedId)
@@ -75,6 +108,24 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
     setDoc(result.data)
     onToast(t('outlineReady'))
     await refreshVideos()
+    const transcriptResult = await api().getTranscript(project.id, selected.id)
+    if (transcriptResult.ok) setTranscript(transcriptResult.data)
+  }
+
+  async function buildRetell(): Promise<void> {
+    if (!selected) return
+    setRetellBusy(true)
+    const result = await api().rebuildRetell(project.id, selected.id)
+    setRetellBusy(false)
+    if (!result.ok) {
+      onToast(result.error)
+      return
+    }
+    setRetell(result.data)
+    onToast(t('retellReady'))
+    await refreshVideos()
+    const transcriptResult = await api().getTranscript(project.id, selected.id)
+    if (transcriptResult.ok) setTranscript(transcriptResult.data)
   }
 
   function seekTo(seconds: number): void {
@@ -84,9 +135,16 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
     void player.play().catch(() => undefined)
   }
 
-  async function exportDocx(videoIds: string[]): Promise<void> {
+  function seekByText(text: string, fallback: number): void {
+    const matched = transcript?.segments.length
+      ? findOutlineSeekTime(text, transcript.segments)
+      : null
+    seekTo(matched ?? fallback)
+  }
+
+  async function exportDocx(videoIds: string[], kind: 'plan' | 'conspect'): Promise<void> {
     setExportBusy(true)
-    const result = await api().exportOutlineDocx(project.id, videoIds)
+    const result = await api().exportOutlineDocx(project.id, videoIds, kind)
     setExportBusy(false)
     if (!result.ok) {
       onToast(result.error)
@@ -94,35 +152,64 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
     }
     if (result.data.canceled) return
     setExportOpen(false)
-    onToast(t('outlineExported'))
+    onToast(kind === 'conspect' ? t('conspectExported') : t('outlineExported'))
   }
 
-  function startExport(): void {
+  function startExport(kind: 'plan' | 'conspect'): void {
     if (analyzedVideos.length === 0) {
       onToast(t('outlineExportEmpty'))
       return
     }
     if (analyzedVideos.length === 1) {
-      void exportDocx([analyzedVideos[0].id])
+      void exportDocx([analyzedVideos[0].id], kind)
       return
     }
-    setExportChoice(selected?.hasAnalysis ? selected.id : 'all')
+    const initial =
+      selected?.hasAnalysis ? [selected.id] : analyzedVideos.map((item) => item.id)
+    setExportKind(kind)
+    setExportIds(initial)
     setExportOpen(true)
   }
 
-  function confirmExport(): void {
-    if (exportChoice === 'all') {
-      void exportDocx(analyzedVideos.map((item) => item.id))
-      return
-    }
-    void exportDocx([exportChoice])
+  function toggleExportId(videoId: string): void {
+    setExportIds((current) =>
+      current.includes(videoId)
+        ? current.filter((id) => id !== videoId)
+        : [...current, videoId]
+    )
   }
 
+  function toggleExportAll(): void {
+    setExportIds((current) =>
+      current.length === analyzedVideos.length
+        ? []
+        : analyzedVideos.map((item) => item.id)
+    )
+  }
+
+  function confirmExport(): void {
+    if (exportIds.length === 0) {
+      onToast(t('outlineExportNeedPick'))
+      return
+    }
+    const ordered = analyzedVideos
+      .map((item) => item.id)
+      .filter((id) => exportIds.includes(id))
+    void exportDocx(ordered, exportKind)
+  }
+
+  const localReady = Boolean(info?.localLlmReady)
+  const canAnalyze =
+    Boolean(selected?.hasTranscript) &&
+    (project.aiMode === 'cloud' || (project.aiMode === 'local' && localReady))
+
   function hint(): string {
-    if (project.aiMode !== 'cloud') return t('outlineNeedCloud')
     if (!selected?.hasTranscript) return t('outlineNeedTranscript')
+    if (project.aiMode === 'local' && !localReady) return t('outlineNeedLocal')
+    if (project.aiMode === 'cloud' && !info?.openaiKeySet) return t('outlineNeedKey')
     if (selected.analysisStale && selected.hasAnalysis) return t('outlineStale')
-    return t('outlinePrivacy')
+    if (selected.retellStale && selected.hasRetell) return t('retellStale')
+    return t('retellHint')
   }
 
   return (
@@ -183,12 +270,14 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
                   <button
                     type="button"
                     className="primary"
-                    disabled={busy || !selected.hasTranscript || project.aiMode !== 'cloud'}
+                    disabled={busy || !canAnalyze}
                     onClick={() => void build()}
                   >
                     <RefreshCw size={14} style={{ marginRight: 6 }} />
                     {busy
-                      ? t('outlineWorking')
+                      ? project.aiMode === 'local'
+                        ? t('outlineWorkingLocal')
+                        : t('outlineWorking')
                       : selected.hasAnalysis
                         ? t('outlineRebuild')
                         : t('outlineBuild')}
@@ -196,62 +285,89 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
                   <button
                     type="button"
                     className="ghost"
+                    disabled={retellBusy || !canAnalyze}
+                    onClick={() => void buildRetell()}
+                  >
+                    <RefreshCw size={14} style={{ marginRight: 6 }} />
+                    {retellBusy
+                      ? project.aiMode === 'local'
+                        ? t('retellWorkingLocal')
+                        : t('retellWorking')
+                      : selected.hasRetell
+                        ? t('retellRebuild')
+                        : t('retellBuild')}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
                     disabled={exportBusy || analyzedVideos.length === 0}
-                    onClick={startExport}
+                    onClick={() => startExport('plan')}
                   >
                     <Download size={14} style={{ marginRight: 6 }} />
                     {t('outlineDownload')}
                   </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={exportBusy || analyzedVideos.length === 0}
+                    onClick={() => startExport('conspect')}
+                  >
+                    <Download size={14} style={{ marginRight: 6 }} />
+                    {t('conspectDownload')}
+                  </button>
                 </div>
 
-                {doc && doc.blocks.length > 0 ? (
-                  <>
-                    <details className="outline-plan">
-                      <summary>
-                        <span>{t('outlinePlan')}</span>
-                        <ChevronDown size={16} />
-                      </summary>
-                      <div className="outline-plan-body">
-                        {doc.blocks.map((block) => (
-                          <article key={block.id} className="outline-block">
-                            <button
-                              type="button"
-                              className="outline-time"
-                              onClick={() => seekTo(block.start)}
-                            >
-                              {formatTimecode(block.start)}–{formatTimecode(block.end)}
-                            </button>
-                            <div>
-                              <strong>{block.title}</strong>
-                              {block.theses.length > 0 ? (
-                                <ul>
-                                  {block.theses.map((line) => (
-                                    <li key={line}>{line}</li>
-                                  ))}
-                                </ul>
-                              ) : null}
-                              <button type="button" className="ghost" onClick={() => seekTo(block.start)}>
-                                {t('outlineJump')}
-                              </button>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </details>
+                {project.aiMode === 'local' ? (
+                  <p className="search-local-note outline-local-note">
+                    {localReady ? t('outlineLocalBanner') : t('outlineLocalMissing')}
+                  </p>
+                ) : null}
 
-                    <div className="outline-assembled">
-                      <p className="muted outline-assembled-hint">{t('outlineClickHint')}</p>
-                      {doc.blocks.map((block) => (
-                        <p
-                          key={block.id}
-                          className="outline-assembled-block"
-                          onClick={() => seekTo(block.start)}
-                        >
-                          {assembleBlockText(block)}
-                        </p>
-                      ))}
-                    </div>
-                  </>
+                <section className="retell-card">
+                  <h4>{t('retellTitle')}</h4>
+                  {selected.retellStale && retell?.text ? (
+                    <p className="stale-banner">{t('retellStale')}</p>
+                  ) : null}
+                  {retell?.text ? (
+                    retell.text.split(/\n+/).map((paragraph, index) => (
+                      <p key={`${index}-${paragraph.slice(0, 24)}`}>{paragraph}</p>
+                    ))
+                  ) : (
+                    <p className="muted">{retellBusy ? t('retellWorking') : t('retellEmpty')}</p>
+                  )}
+                </section>
+
+                {alignedBlocks.length > 0 ? (
+                  <div className="outline-assembled">
+                    <h4>{t('outlineTitle')}</h4>
+                    <p className="muted outline-assembled-hint">{t('outlineClickHint')}</p>
+                    {alignedBlocks.map((block) => (
+                      <article
+                        key={block.id}
+                        className="outline-assembled-block"
+                        onClick={() =>
+                          seekByText(`${block.title}. ${block.theses.join(' ')}`, block.start)
+                        }
+                      >
+                        <h4>{block.title}</h4>
+                        {block.theses.length > 0 ? (
+                          <ul>
+                            {block.theses.map((line) => (
+                              <li
+                                key={line}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  seekByText(line, block.start)
+                                }}
+                              >
+                                {line}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
                 ) : (
                   <p className="muted">{busy ? t('outlineWorking') : t('outlineEmptyHint')}</p>
                 )}
@@ -266,28 +382,39 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
       {exportOpen ? (
         <div className="overlay" onMouseDown={() => setExportOpen(false)}>
           <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
-            <h2>{t('outlineExportTitle')}</h2>
-            <p className="muted">{t('outlineExportHint')}</p>
+            <h2>{exportKind === 'conspect' ? t('conspectExportTitle') : t('outlineExportTitle')}</h2>
+            <p className="muted">
+              {exportKind === 'conspect' ? t('conspectExportHint') : t('outlineExportHint')}
+            </p>
             <div className="mode-grid" style={{ marginTop: 16 }}>
               <button
                 type="button"
-                className={exportChoice === 'all' ? 'mode-card selected' : 'mode-card'}
-                onClick={() => setExportChoice('all')}
+                className={
+                  exportIds.length === analyzedVideos.length ? 'mode-card selected' : 'mode-card'
+                }
+                onClick={toggleExportAll}
               >
                 <strong>{t('outlineExportAll')}</strong>
-                <p className="muted">{analyzedVideos.map((item) => item.displayName).join(', ')}</p>
+                <p className="muted">{t('outlineExportAllHint')}</p>
               </button>
-              {analyzedVideos.map((video) => (
-                <button
-                  key={video.id}
-                  type="button"
-                  className={exportChoice === video.id ? 'mode-card selected' : 'mode-card'}
-                  onClick={() => setExportChoice(video.id)}
-                >
-                  <strong>{video.displayName}</strong>
-                  <p className="muted">{t('outlineExportPick')}</p>
-                </button>
-              ))}
+              {analyzedVideos.map((video) => {
+                const checked = exportIds.includes(video.id)
+                return (
+                  <button
+                    key={video.id}
+                    type="button"
+                    className={checked ? 'mode-card selected' : 'mode-card'}
+                    onClick={() => toggleExportId(video.id)}
+                  >
+                    <span className="outline-export-row">
+                      <span className={checked ? 'outline-check on' : 'outline-check'} aria-hidden="true">
+                        {checked ? '✓' : ''}
+                      </span>
+                      <strong>{video.displayName}</strong>
+                    </span>
+                  </button>
+                )
+              })}
             </div>
             <div className="modal-actions">
               <button type="button" className="ghost" onClick={() => setExportOpen(false)}>
@@ -296,7 +423,7 @@ export function OutlinePanel({ project, onToast }: OutlinePanelProps): React.JSX
               <button
                 type="button"
                 className="primary"
-                disabled={exportBusy}
+                disabled={exportBusy || exportIds.length === 0}
                 onClick={confirmExport}
               >
                 {t('outlineExportConfirm')}

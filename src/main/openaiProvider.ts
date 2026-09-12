@@ -45,6 +45,39 @@ export async function testOpenAiKey(apiKey: string): Promise<void> {
   }
 }
 
+export async function chatText(options: ChatJsonOptions): Promise<string> {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: options.model,
+      temperature: 0.3,
+      messages: [
+        { role: 'system', content: options.system },
+        { role: 'user', content: options.user }
+      ]
+    })
+  })
+  const raw = await response.text()
+  if (!response.ok) {
+    throw new Error(friendlyOpenAiError(response.status, raw), {
+      cause: openAiErrorCode(raw, response.status)
+    })
+  }
+  let parsed: { choices?: Array<{ message?: { content?: string } }> }
+  try {
+    parsed = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> }
+  } catch {
+    throw new Error('OpenAI вернул непонятный ответ.')
+  }
+  const content = parsed.choices?.[0]?.message?.content?.trim()
+  if (!content) throw new Error('OpenAI не вернул текст пересказа.')
+  return content
+}
+
 export async function chatJson(options: ChatJsonOptions): Promise<string> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',

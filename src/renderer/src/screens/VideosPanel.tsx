@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Film, FolderOpen, Pause, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Download, Film, FolderOpen, Pause, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import type { PipelineProgressEvent, ProjectSummary, VideoItem } from '@shared/types'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { VideoPlayer } from '../components/VideoPlayer'
@@ -25,6 +25,9 @@ export function VideosPanel({
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [pendingDelete, setPendingDelete] = useState<VideoItem | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportIds, setExportIds] = useState<string[]>([])
 
   const selected = useMemo(
     () => videos.find((item) => item.id === selectedId) ?? null,
@@ -137,6 +140,47 @@ export function VideosPanel({
     onProjectStatsMaybeChanged()
   }
 
+  async function exportReport(videoIds: string[]): Promise<void> {
+    setExportBusy(true)
+    const result = await api().exportReportDocx(project.id, videoIds)
+    setExportBusy(false)
+    if (!result.ok) {
+      onToast(result.error)
+      return
+    }
+    if (result.data.canceled) return
+    setExportOpen(false)
+    onToast(t('reportExported'))
+  }
+
+  function startReportExport(): void {
+    if (videos.length === 0) {
+      onToast(t('reportExportEmpty'))
+      return
+    }
+    if (videos.length === 1) {
+      void exportReport([videos[0].id])
+      return
+    }
+    setExportIds(selected ? [selected.id] : videos.map((item) => item.id))
+    setExportOpen(true)
+  }
+
+  function toggleExportId(videoId: string): void {
+    setExportIds((current) =>
+      current.includes(videoId) ? current.filter((id) => id !== videoId) : [...current, videoId]
+    )
+  }
+
+  function confirmReportExport(): void {
+    if (exportIds.length === 0) {
+      onToast(t('outlineExportNeedPick'))
+      return
+    }
+    const ordered = videos.map((item) => item.id).filter((id) => exportIds.includes(id))
+    void exportReport(ordered)
+  }
+
   return (
     <div
       className={dragging ? 'videos-layout drop-active' : 'videos-layout'}
@@ -152,10 +196,21 @@ export function VideosPanel({
           <h2>{t('videoTitle')}</h2>
           <p className="muted">{videos.length} файл(ов) в проекте</p>
         </div>
-        <button type="button" className="primary" disabled={busy} onClick={() => void onAddClick()}>
-          <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
-          {t('videoAdd')}
-        </button>
+        <div className="card-actions wrap">
+          <button
+            type="button"
+            className="ghost"
+            disabled={exportBusy || videos.length === 0}
+            onClick={startReportExport}
+          >
+            <Download size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+            {t('reportDownload')}
+          </button>
+          <button type="button" className="primary" disabled={busy} onClick={() => void onAddClick()}>
+            <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+            {t('videoAdd')}
+          </button>
+        </div>
       </div>
 
       {videos.length === 0 ? (
@@ -342,6 +397,58 @@ export function VideosPanel({
           </div>
         </div>
       )}
+
+      {exportOpen ? (
+        <div className="overlay" onMouseDown={() => setExportOpen(false)}>
+          <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+            <h2>{t('reportExportTitle')}</h2>
+            <p className="muted">{t('reportExportHint')}</p>
+            <div className="mode-grid" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className={exportIds.length === videos.length ? 'mode-card selected' : 'mode-card'}
+                onClick={() =>
+                  setExportIds(exportIds.length === videos.length ? [] : videos.map((item) => item.id))
+                }
+              >
+                <strong>{t('outlineExportAll')}</strong>
+                <p className="muted">{t('outlineExportAllHint')}</p>
+              </button>
+              {videos.map((video) => {
+                const checked = exportIds.includes(video.id)
+                return (
+                  <button
+                    key={video.id}
+                    type="button"
+                    className={checked ? 'mode-card selected' : 'mode-card'}
+                    onClick={() => toggleExportId(video.id)}
+                  >
+                    <span className="outline-export-row">
+                      <span className={checked ? 'outline-check on' : 'outline-check'} aria-hidden="true">
+                        {checked ? '✓' : ''}
+                      </span>
+                      <strong>{video.displayName}</strong>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="ghost" onClick={() => setExportOpen(false)}>
+                {t('cancel')}
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={exportBusy || exportIds.length === 0}
+                onClick={confirmReportExport}
+              >
+                {t('outlineExportConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {pendingDelete ? (
         <ConfirmDialog

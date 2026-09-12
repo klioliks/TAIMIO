@@ -11,6 +11,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "keys:issue": "node key-service/scripts/issue.mjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist:portable": "npm run build && electron-builder --win portable"
@@ -21,6 +22,7 @@
     "docx": "^9.7.1",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
+    "node-llama-cpp": "^3.20.0",
     "sql.js": "^1.13.0"
   },
   "devDependencies": {
