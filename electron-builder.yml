@@ -32,11 +32,14 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: Установить TAIMIO.${ext}
+  artifactName: TAIMIO_Beta_Setup.${ext}
+  include: build/installer-setup.nsh
   shortcutName: TAIMIO
   uninstallDisplayName: TAIMIO
-  oneClick: true
+  oneClick: false
   perMachine: false
+  allowToChangeInstallationDirectory: false
+  deleteAppDataOnUninstall: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   runAfterFinish: true

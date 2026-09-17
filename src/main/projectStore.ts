@@ -20,6 +20,7 @@ import { joinTranscriptText } from '../shared/transcriptText'
 import { readAnalysisFile, writeAnalysisFile } from './analysis'
 import { readRetellFile, writeRetellFile } from './retell'
 import { readVisualsForUi, readVisualsFile } from './visuals'
+import { backupSqliteFile, PROJECT_SCHEMA_VERSION } from './sqliteBackup'
 import type { AnalysisDocument, RetellDocument, VisualDocument } from '../shared/types'
 
 function nowIso(): string {
@@ -114,83 +115,107 @@ export class ProjectStore {
     return join(folderPath, 'project.sqlite')
   }
 
-  private migrateProject(db: Database): void {
-    run(
-      db,
-      `CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )`
-    )
-    run(
-      db,
-      `CREATE TABLE IF NOT EXISTS videos (
-        id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        source_path TEXT NOT NULL,
-        file_name TEXT,
-        size_bytes INTEGER,
-        duration_sec REAL,
-        width INTEGER,
-        height INTEGER,
-        container TEXT,
-        video_codec TEXT,
-        audio_codec TEXT,
-        playable_in_app INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'registered',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )`
-    )
-    run(
-      db,
-      `CREATE TABLE IF NOT EXISTS pipeline_stages (
-        video_id TEXT NOT NULL,
-        stage TEXT NOT NULL,
-        status TEXT NOT NULL,
-        artifact_path TEXT,
-        input_hash TEXT,
-        error_code TEXT,
-        error_message TEXT,
-        progress REAL NOT NULL DEFAULT 0,
-        started_at TEXT,
-        finished_at TEXT,
-        PRIMARY KEY (video_id, stage)
-      )`
-    )
+  private migrateProject(db: Database, from: number, stored: number | null): boolean {
+    if (from >= PROJECT_SCHEMA_VERSION && stored !== null) return false
+    if (from < 1) {
+      run(
+        db,
+        `CREATE TABLE IF NOT EXISTS meta (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        )`
+      )
+      run(
+        db,
+        `CREATE TABLE IF NOT EXISTS videos (
+          id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          file_name TEXT,
+          size_bytes INTEGER,
+          duration_sec REAL,
+          width INTEGER,
+          height INTEGER,
+          container TEXT,
+          video_codec TEXT,
+          audio_codec TEXT,
+          playable_in_app INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'registered',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`
+      )
+      run(
+        db,
+        `CREATE TABLE IF NOT EXISTS pipeline_stages (
+          video_id TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          status TEXT NOT NULL,
+          artifact_path TEXT,
+          input_hash TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          progress REAL NOT NULL DEFAULT 0,
+          started_at TEXT,
+          finished_at TEXT,
+          PRIMARY KEY (video_id, stage)
+        )`
+      )
+    }
+    if (from < 1 || stored === null) {
+      const columns = all(db, 'PRAGMA table_info(videos)').map((row) => String(row.name))
+      const ensure = (name: string, ddl: string): void => {
+        if (!columns.includes(name)) {
+          run(db, `ALTER TABLE videos ADD COLUMN ${ddl}`)
+        }
+      }
+      ensure('file_name', 'file_name TEXT')
+      ensure('width', 'width INTEGER')
+      ensure('height', 'height INTEGER')
+      ensure('container', 'container TEXT')
+      ensure('video_codec', 'video_codec TEXT')
+      ensure('audio_codec', 'audio_codec TEXT')
+      ensure('playable_in_app', 'playable_in_app INTEGER NOT NULL DEFAULT 0')
+      ensure('updated_at', 'updated_at TEXT')
 
-    const columns = all(db, 'PRAGMA table_info(videos)').map((row) => String(row.name))
-    const ensure = (name: string, ddl: string): void => {
-      if (!columns.includes(name)) {
-        run(db, `ALTER TABLE videos ADD COLUMN ${ddl}`)
+      const videoIds = all(db, 'SELECT id FROM videos').map((row) => String(row.id))
+      for (const videoId of videoIds) {
+        const existing = all(db, 'SELECT stage FROM pipeline_stages WHERE video_id = ? AND stage = ?', [
+          videoId,
+          'stt'
+        ])
+        if (!existing[0]) {
+          run(
+            db,
+            `INSERT INTO pipeline_stages (
+              video_id, stage, status, artifact_path, input_hash, error_code, error_message,
+              progress, started_at, finished_at
+            ) VALUES (?, 'stt', 'queued', NULL, NULL, NULL, NULL, 0, NULL, NULL)`,
+            [videoId]
+          )
+        }
       }
     }
-    ensure('file_name', 'file_name TEXT')
-    ensure('width', 'width INTEGER')
-    ensure('height', 'height INTEGER')
-    ensure('container', 'container TEXT')
-    ensure('video_codec', 'video_codec TEXT')
-    ensure('audio_codec', 'audio_codec TEXT')
-    ensure('playable_in_app', 'playable_in_app INTEGER NOT NULL DEFAULT 0')
-    ensure('updated_at', 'updated_at TEXT')
+    run(db, 'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', [
+      'schema_version',
+      String(PROJECT_SCHEMA_VERSION)
+    ])
+    this.logger.info(`Проект: схема ${from} → ${PROJECT_SCHEMA_VERSION}`)
+    return true
+  }
 
-    const videoIds = all(db, 'SELECT id FROM videos').map((row) => String(row.id))
-    for (const videoId of videoIds) {
-      const existing = all(db, 'SELECT stage FROM pipeline_stages WHERE video_id = ? AND stage = ?', [
-        videoId,
-        'stt'
-      ])
-      if (!existing[0]) {
-        run(
-          db,
-          `INSERT INTO pipeline_stages (
-            video_id, stage, status, artifact_path, input_hash, error_code, error_message,
-            progress, started_at, finished_at
-          ) VALUES (?, 'stt', 'queued', NULL, NULL, NULL, NULL, 0, NULL, NULL)`,
-          [videoId]
-        )
-      }
-    }
+  private readProjectSchemaVersion(db: Database): number | null {
+    const tables = all(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'`)
+    if (tables.length === 0) return null
+    const rows = all(db, 'SELECT value FROM meta WHERE key = ?', ['schema_version'])
+    if (!rows[0]) return null
+    const parsed = Number(rows[0].value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  private inferredProjectSchema(db: Database): number {
+    const videos = all(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'videos'`)
+    return videos.length > 0 ? 1 : 0
   }
 
   private async openProjectDb(folderPath: string): Promise<Database> {
@@ -200,8 +225,12 @@ export class ProjectStore {
       throw new Error('Файл проекта повреждён или не найден.')
     }
     const db = new SQL.Database(readFileSync(file))
-    this.migrateProject(db)
-    this.save(db, file)
+    const stored = this.readProjectSchemaVersion(db)
+    const from = stored ?? this.inferredProjectSchema(db)
+    const needsMigrate = from < PROJECT_SCHEMA_VERSION || stored === null
+    if (needsMigrate) backupSqliteFile(file)
+    const migrated = this.migrateProject(db, from, stored)
+    if (migrated) this.save(db, file)
     return db
   }
 

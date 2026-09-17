@@ -56,7 +56,12 @@ export class TaimioAccessProvider implements LicenseProvider {
         })
         const next: AccessEnvelope = {
           ...envelope,
-          status: checked.claims.status === 'not_activated' ? 'active' : checked.claims.status,
+          status:
+            checked.claims.status === 'expired'
+              ? 'expired'
+              : checked.claims.status === 'blocked'
+                ? 'blocked'
+                : 'active',
           expiresAt: checked.claims.expiresAt ?? envelope.expiresAt,
           activatedAt: checked.claims.activatedAt ?? envelope.activatedAt,
           lastCheckedAt: new Date().toISOString(),
@@ -153,7 +158,7 @@ export class TaimioAccessProvider implements LicenseProvider {
     })
     const envelope: AccessEnvelope = {
       v: 1,
-      plan: 'beta',
+      plan: result.claims.plan === 'trial' ? 'trial' : 'beta',
       keyId: result.claims.keyId,
       keyMasked: maskAccessKey(typed),
       activatedAt: result.claims.activatedAt ?? existing?.activatedAt ?? new Date().toISOString(),
@@ -161,7 +166,7 @@ export class TaimioAccessProvider implements LicenseProvider {
       deviceId,
       lastCheckedAt: new Date().toISOString(),
       lastTrustedLocalAt: new Date().toISOString(),
-      status: result.claims.status === 'not_activated' ? 'active' : result.claims.status,
+      status: result.claims.status === 'expired' ? 'expired' : result.claims.status === 'blocked' ? 'blocked' : 'active',
       serverToken: result.token
     }
     writeAccessEnvelope(this.paths, envelope)

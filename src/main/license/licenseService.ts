@@ -43,6 +43,9 @@ export class LicenseService {
       throw new Error('Этот ключ заблокирован.')
     }
     if (snapshot.state === 'expired') {
+      if (snapshot.plan === 'trial') {
+        throw new Error('5 дней пробного доступа закончились.')
+      }
       throw new Error('Срок действия вашего ключа TAIMIO Beta закончился.')
     }
     throw new Error('Сначала активируйте ключ доступа.')

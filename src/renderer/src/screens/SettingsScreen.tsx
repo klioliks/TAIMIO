@@ -3,6 +3,7 @@ import type { AppInfo, LicenseSnapshot, SetupProgressEvent, WhisperModelId } fro
 import { t, tf } from '../i18n/ru'
 import { api } from '../lib/api'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { betaProductLabel } from '@shared/betaVersion'
 
 interface SettingsScreenProps {
   info: AppInfo | null
@@ -100,8 +101,15 @@ export function SettingsScreen({
     onInfoChange?.(result.data)
   }
 
+  function accessPlanLabel(): string {
+    if (access?.plan === 'admin') return t('accessAdminName')
+    if (access?.plan === 'trial') return t('accessTrialName')
+    return t('accessBetaName')
+  }
+
   function accessStatusLabel(): string {
     if (access?.plan === 'admin' && access.state === 'active') return t('accessStatusAdmin')
+    if (access?.plan === 'trial' && access.state === 'expired') return t('accessStatusTrialExpired')
     switch (access?.state) {
       case 'active':
         return t('accessStatusActive')
@@ -123,6 +131,17 @@ export function SettingsScreen({
       month: 'long',
       year: 'numeric'
     })
+  }
+
+  async function enterAnotherKey(): Promise<void> {
+    setAccessBusy(true)
+    const result = await api().clearAccessKey()
+    setAccessBusy(false)
+    if (!result.ok) {
+      onToast?.(result.error)
+      return
+    }
+    onAccessChange?.(result.data.snapshot)
   }
 
   async function clearAccess(): Promise<void> {
@@ -194,7 +213,7 @@ export function SettingsScreen({
       <div className="settings-grid">
         <article className="settings-card">
           <h2>{t('accessTitle')}</h2>
-          <p>{access?.plan === 'admin' ? t('accessAdminName') : t('accessBetaName')}</p>
+          <p>{accessPlanLabel()}</p>
           <div className="setup-list">
             <div className="setup-row">
               <span>{t('accessStatus')}</span>
@@ -221,10 +240,20 @@ export function SettingsScreen({
               <strong>{access?.licenseKeyMasked ?? '—'}</strong>
             </div>
           </div>
+          {access?.plan === 'trial' && access.state === 'expired' ? (
+            <p className="muted" style={{ marginTop: 12 }}>
+              {t('accessTrialExpiredBanner')}
+            </p>
+          ) : null}
           <div className="card-actions wrap" style={{ marginTop: 16 }}>
             <button type="button" className="ghost" disabled={accessBusy} onClick={() => void checkAccess()}>
               {accessBusy ? t('accessChecking') : t('accessCheck')}
             </button>
+            {access?.state === 'expired' || access?.state === 'blocked' ? (
+              <button type="button" className="primary" disabled={accessBusy} onClick={() => void enterAnotherKey()}>
+                {t('accessEnterAnother')}
+              </button>
+            ) : null}
             {access?.state && access.state !== 'not_activated' ? (
               <button type="button" className="danger" disabled={accessBusy} onClick={() => setConfirmClearAccess(true)}>
                 {t('accessClear')}
@@ -321,9 +350,7 @@ export function SettingsScreen({
         </article>
         <article className="settings-card">
           <h2>{t('settingsVersion')}</h2>
-          <p>
-            {t('appName')} {info?.version ?? '0.1.0'}
-          </p>
+          <p>{info ? betaProductLabel(info.version) : t('appName')}</p>
         </article>
         <article className="settings-card">
           <h2>{t('settingsPaths')}</h2>

@@ -651,11 +651,17 @@ button {
 }
 
 .about-tagline {
-  margin: 0 0 18px !important;
+  margin: 0 0 8px !important;
   color: #c4b5fd !important;
   font-family: var(--script);
   font-size: 22px;
   line-height: 1.3;
+}
+
+.about-version {
+  margin: 0 0 18px;
+  color: var(--text-muted);
+  font-size: 15px;
 }
 
 .about-author {

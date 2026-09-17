@@ -131,12 +131,20 @@ export default function App(): React.JSX.Element {
         <main className="main">
           {access && (access.state === 'expired' || access.state === 'blocked') ? (
             <p className="access-banner">
-              {access.state === 'blocked' ? t('accessStatusBlocked') : t('accessExpiredBanner')}{' '}
-              {t('accessReadOnly')}
+              {access.plan === 'trial' && access.state === 'expired'
+                ? t('accessTrialExpiredBanner')
+                : access.state === 'blocked'
+                  ? t('accessStatusBlocked')
+                  : t('accessExpiredBanner')}{' '}
+              {access.plan === 'trial' && access.state === 'expired' ? null : t('accessReadOnly')}
             </p>
           ) : null}
           {view === 'home' ? (
-            <WelcomeScreen onNewProject={() => setShowCreate(true)} onOpenProjects={() => setView('projects')} />
+            <WelcomeScreen
+              version={info?.version ?? null}
+              onNewProject={() => setShowCreate(true)}
+              onOpenProjects={() => setView('projects')}
+            />
           ) : null}
           {view === 'projects' ? (
             <ProjectsScreen

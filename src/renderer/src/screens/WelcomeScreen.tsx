@@ -10,14 +10,20 @@ import {
 import { useState } from 'react'
 import logo from '../assets/taimio-logo.png'
 import { AboutModal } from '../components/AboutModal'
-import { t } from '../i18n/ru'
+import { t, tf } from '../i18n/ru'
+import { formatBetaVersion } from '@shared/betaVersion'
 
 interface WelcomeScreenProps {
   onNewProject: () => void
   onOpenProjects: () => void
+  version: string | null
 }
 
-export function WelcomeScreen({ onNewProject, onOpenProjects }: WelcomeScreenProps): React.JSX.Element {
+export function WelcomeScreen({
+  onNewProject,
+  onOpenProjects,
+  version
+}: WelcomeScreenProps): React.JSX.Element {
   const [aboutOpen, setAboutOpen] = useState(false)
   const features = [
     { title: t('featureTranscript'), hint: t('featureTranscriptHint'), icon: FileText },
@@ -80,9 +86,11 @@ export function WelcomeScreen({ onNewProject, onOpenProjects }: WelcomeScreenPro
           {t('aboutOpen')}
         </button>
         <p className="welcome-script welcome-time">{t('handwrittenTime')}</p>
-        <p className="welcome-beta">{t('welcomeBeta')}</p>
+        <p className="welcome-beta">
+          {version ? tf('welcomeBeta', { version: formatBetaVersion(version) }) : t('appName')}
+        </p>
       </div>
-      {aboutOpen ? <AboutModal onClose={() => setAboutOpen(false)} /> : null}
+      {aboutOpen ? <AboutModal version={version ?? ''} onClose={() => setAboutOpen(false)} /> : null}
     </section>
   )
 }

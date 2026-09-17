@@ -4,7 +4,7 @@ export type LicenseRefreshReason = 'startup' | 'periodic' | 'manual' | 'activate
 
 export type LicenseSource = 'stub' | 'cached' | 'server' | 'offline'
 
-export type AccessPlan = 'beta' | 'beta_offline' | 'admin'
+export type AccessPlan = 'beta' | 'beta_offline' | 'admin' | 'trial'
 
 export interface LicenseSnapshot {
   state: LicenseState

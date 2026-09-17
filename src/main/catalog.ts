@@ -6,6 +6,7 @@ import { app } from 'electron'
 import type { AiMode, CreateProjectInput, ProcessingStatus, ProjectSummary } from '../shared/types'
 import type { AppPaths } from './paths'
 import type { FileLogger } from './logger'
+import { backupSqliteFile, CATALOG_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION } from './sqliteBackup'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -84,8 +85,12 @@ export class CatalogStore {
     const file = this.paths.catalogPath
     const existed = existsSync(file)
     const db = existed ? new SQL.Database(readFileSync(file)) : new SQL.Database()
-    this.migrateCatalog(db)
-    if (!existed) {
+    const stored = existed ? this.readCatalogSchemaVersion(db) : null
+    const from = stored ?? (existed ? this.inferredCatalogSchema(db) : 0)
+    const needsMigrate = from < CATALOG_SCHEMA_VERSION || stored === null
+    if (existed && needsMigrate) backupSqliteFile(file)
+    const migrated = this.migrateCatalog(db, from, stored)
+    if (!existed || migrated) {
       this.save(db, file)
     }
     return db
@@ -96,28 +101,51 @@ export class CatalogStore {
     writeFileSync(filePath, Buffer.from(data))
   }
 
-  private migrateCatalog(db: Database): void {
-    run(
-      db,
-      `CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        ai_mode TEXT NOT NULL,
-        folder_path TEXT NOT NULL,
-        video_count INTEGER NOT NULL DEFAULT 0,
-        processing_status TEXT NOT NULL DEFAULT 'empty',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        last_opened_at TEXT NOT NULL
-      )`
-    )
-    run(
-      db,
-      `CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )`
-    )
+  private readCatalogSchemaVersion(db: Database): number | null {
+    const tables = all(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'settings'`)
+    if (tables.length === 0) return null
+    const rows = all(db, 'SELECT value FROM settings WHERE key = ?', ['catalog_schema_version'])
+    if (!rows[0]) return null
+    const parsed = Number(rows[0].value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  private inferredCatalogSchema(db: Database): number {
+    const projects = all(db, `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`)
+    return projects.length > 0 ? 1 : 0
+  }
+
+  private migrateCatalog(db: Database, from: number, stored: number | null): boolean {
+    if (from >= CATALOG_SCHEMA_VERSION && stored !== null) return false
+    if (from < 1) {
+      run(
+        db,
+        `CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          ai_mode TEXT NOT NULL,
+          folder_path TEXT NOT NULL,
+          video_count INTEGER NOT NULL DEFAULT 0,
+          processing_status TEXT NOT NULL DEFAULT 'empty',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_opened_at TEXT NOT NULL
+        )`
+      )
+      run(
+        db,
+        `CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        )`
+      )
+    }
+    run(db, 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [
+      'catalog_schema_version',
+      String(CATALOG_SCHEMA_VERSION)
+    ])
+    this.logger.info(`Каталог: схема ${from} → ${CATALOG_SCHEMA_VERSION}`)
+    return true
   }
 
   getSetting(key: string): Promise<string | null> {
@@ -239,6 +267,10 @@ export class CatalogStore {
         run(projectDb, 'INSERT INTO meta (key, value) VALUES (?, ?)', ['name', name])
         run(projectDb, 'INSERT INTO meta (key, value) VALUES (?, ?)', ['ai_mode', input.aiMode])
         run(projectDb, 'INSERT INTO meta (key, value) VALUES (?, ?)', ['created_at', createdAt])
+        run(projectDb, 'INSERT INTO meta (key, value) VALUES (?, ?)', [
+          'schema_version',
+          String(PROJECT_SCHEMA_VERSION)
+        ])
         this.save(projectDb, projectDbPath)
       } finally {
         projectDb.close()

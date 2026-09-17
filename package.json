@@ -1,6 +1,6 @@
 {
   "name": "taimio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "TAIMIO — Не пересматривай. Найди.",
   "author": "TAIMIO",
@@ -15,7 +15,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "dist:portable": "npm run build && electron-builder --win portable",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:setup": "node scripts/dist-nsis.mjs setup",
+    "dist:update": "node scripts/dist-nsis.mjs update",
+    "dist:win": "node scripts/dist-nsis.mjs all"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

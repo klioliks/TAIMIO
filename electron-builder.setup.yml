@@ -1,0 +1,15 @@
+extends: ./electron-builder.yml
+nsis:
+  artifactName: TAIMIO_Beta_Setup.${ext}
+  include: build/installer-setup.nsh
+  shortcutName: TAIMIO
+  uninstallDisplayName: TAIMIO
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  installerLanguages:
+    - ru

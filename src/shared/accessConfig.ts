@@ -5,6 +5,7 @@ export const ACCESS_CONFIG = {
   gracePeriodHours: 336,
   clockSkewMinutes: 120,
   durationDays: 60,
+  trialDurationDays: 5,
   deviceLimit: 1
 } as const
 

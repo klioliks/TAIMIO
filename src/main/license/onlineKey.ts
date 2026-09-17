@@ -9,7 +9,7 @@ export interface ServerAccessToken {
 
 export interface ServerAccessClaims {
   keyId: string
-  plan: 'beta'
+  plan: 'beta' | 'trial'
   status: 'active' | 'blocked' | 'expired' | 'not_activated'
   expiresAt: string | null
   activatedAt: string | null
